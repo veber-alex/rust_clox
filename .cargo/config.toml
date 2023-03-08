@@ -1,2 +1,6 @@
 [build]
-rustflags = ["-Wclippy::undocumented_unsafe_blocks", "-Wclippy::multiple_unsafe_ops_per_block"]
+rustflags = [
+    "-Wclippy::undocumented_unsafe_blocks", 
+    "-Wclippy::multiple_unsafe_ops_per_block", 
+    "-Wrust_2018_idioms",
+]

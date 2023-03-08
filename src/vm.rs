@@ -34,7 +34,11 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn interpret(&mut self) -> InterpretResult {
+    pub fn interpret(source: &str) -> InterpretResult {
+        todo!()
+    }
+
+    fn run(&mut self) -> InterpretResult {
         use OpCode::*;
 
         loop {
@@ -115,7 +119,3 @@ pub enum InterpretResult {
     CompileError,
     RuntimeError,
 }
-
-pub fn init_vm() {}
-
-pub fn free_vm() {}

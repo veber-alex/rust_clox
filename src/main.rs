@@ -1,29 +1,67 @@
 #![feature(variant_count)]
+#![feature(char_indices_offset)]
 
-use chunk::{Chunk, OpCode};
-use vm::{free_vm, init_vm, VM};
+use std::{
+    io::{stdin, stdout, BufRead, Write},
+    process::exit,
+};
+
+use compiler::compile;
+use vm::InterpretResult;
+
+#[macro_use]
+mod scanner;
 
 mod chunk;
+mod compiler;
 mod value;
 mod vm;
 
 fn main() {
-    init_vm();
+    let args: Vec<String> = std::env::args().collect();
 
-    let mut chunk = Chunk::new();
+    match args.as_slice() {
+        [_] => repl(),
+        [_, path] => run_file(path),
+        _ => {
+            eprintln!("Usage: rust_clox [path]");
+            exit(64)
+        }
+    }
+}
 
-    chunk.write_constant(1.2, 123);
-    chunk.write_constant(3.4, 123);
-    chunk.write_code(OpCode::OpAdd, 123);
-    chunk.write_constant(2.0, 123);
-    chunk.write_code(OpCode::OpDivide, 123);
-    chunk.write_code(OpCode::OpNegate, 123);
-    chunk.write_code(OpCode::OpReturn, 123);
+fn run_file(path: &str) {
+    let Ok(file) = std::fs::read_to_string(path) else {
+        eprintln!("Could not open file {path}");
+        exit(74)
+    };
 
-    chunk.disassemble_chunk("test chunk");
+    match interpret(&file) {
+        InterpretResult::CompileError => exit(65),
+        InterpretResult::RuntimeError => exit(70),
+        InterpretResult::Ok => {}
+    }
+}
 
-    let mut vm = VM::new(&chunk);
-    vm.interpret();
+fn repl() {
+    let mut line = String::new();
+    let mut stdin = stdin().lock();
+    let mut stdout = stdout().lock();
 
-    free_vm();
+    loop {
+        print!("> ");
+        let _ = stdout.flush();
+
+        if let Ok(0) | Err(_) = stdin.read_line(&mut line) {
+            break;
+        }
+
+        let _ = interpret(&line);
+        line.clear();
+    }
+}
+
+fn interpret(source: &str) -> InterpretResult {
+    compile(source);
+    InterpretResult::Ok
 }
