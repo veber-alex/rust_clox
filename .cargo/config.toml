@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-Wclippy::undocumented_unsafe_blocks", "-Wclippy::multiple_unsafe_ops_per_block"]

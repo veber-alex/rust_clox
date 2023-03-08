@@ -4,12 +4,17 @@ use crate::value::Value;
 #[repr(u8)]
 pub enum OpCode {
     OpConstant,
+    OpAdd,
+    OpSubtract,
+    OpMultiply,
+    OpDivide,
+    OpNegate,
     OpReturn,
 }
 
 impl OpCode {
     // Safety: byte must be a valid value from the OpCode enum
-    unsafe fn from_u8_unchecked(byte: u8) -> Self {
+    pub unsafe fn from_u8_unchecked(byte: u8) -> Self {
         debug_assert!(byte as usize <= std::mem::variant_count::<OpCode>());
         // Safety: According to the contract of the function only valid OpCode bytes are allowed
         unsafe { std::mem::transmute(byte) }
@@ -17,8 +22,8 @@ impl OpCode {
 }
 
 pub struct Chunk {
-    code: Vec<u8>,
-    constants: Vec<Value>,
+    pub code: Vec<u8>,
+    pub constants: Vec<Value>,
     lines: Vec<usize>,
 }
 
@@ -67,7 +72,7 @@ impl Chunk {
         }
     }
 
-    fn disassemble_instruction(&self, offset: usize) -> usize {
+    pub fn disassemble_instruction(&self, offset: usize) -> usize {
         use OpCode::*;
 
         print!("{offset:04} ");
@@ -83,6 +88,11 @@ impl Chunk {
         match instruction {
             OpReturn => self.simple_instruction("OP_RETURN", offset),
             OpConstant => self.constant_instruction("OP_CONSTANT", offset),
+            OpNegate => self.simple_instruction("OP_NEGATE", offset),
+            OpAdd => self.simple_instruction("OP_ADD", offset),
+            OpSubtract => self.simple_instruction("OP_SUBTRACT", offset),
+            OpMultiply => self.simple_instruction("OP_MULTIPLY", offset),
+            OpDivide => self.simple_instruction("OP_DIVIDE", offset),
         }
     }
 
