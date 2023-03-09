@@ -36,26 +36,12 @@ impl Chunk {
         }
     }
 
-    pub fn write_constant(&mut self, value: Value, line: usize) {
-        let index = self.add_constant(value);
-        self.write_chunk(OpCode::OpConstant as u8, line);
-        self.write_chunk(index as u8, line)
-    }
-
-    pub fn write_code(&mut self, code: OpCode, line: usize) {
-        self.write_chunk(code as u8, line)
-    }
-
-    fn write_chunk(&mut self, byte: u8, line: usize) {
+    pub fn write_chunk(&mut self, byte: u8, line: usize) {
         self.code.push(byte);
         self.lines.push(line);
     }
 
-    fn free_chunk(&mut self) {
-        *self = Chunk::new()
-    }
-
-    fn add_constant(&mut self, value: Value) -> usize {
+    pub fn add_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
     }

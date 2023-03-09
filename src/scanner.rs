@@ -2,6 +2,7 @@ use std::str::CharIndices;
 
 #[rustfmt::skip]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TokenKind {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
@@ -68,10 +69,21 @@ pub enum TokenKind {
       (ERR) => {$crate::scanner::TokenKind::Error};
   }
 
+#[derive(Clone, Copy)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub lexeme: &'a str,
     pub line: usize,
+}
+
+impl<'a> Token<'a> {
+    pub fn dummy() -> Self {
+        Self {
+            kind: T![EOF],
+            lexeme: "",
+            line: 0,
+        }
+    }
 }
 
 pub struct Scanner<'a> {
@@ -111,13 +123,13 @@ impl<'a> Scanner<'a> {
             '+' => self.make_token(T![+]),
             '/' => self.make_token(T![/]),
             '*' => self.make_token(T![*]),
-            '!' if self.compare('=') => self.make_token(T![!=]),
+            '!' if self.consume('=') => self.make_token(T![!=]),
             '!' => self.make_token(T![!]),
-            '=' if self.compare('=') => self.make_token(T![==]),
+            '=' if self.consume('=') => self.make_token(T![==]),
             '=' => self.make_token(T![=]),
-            '<' if self.compare('=') => self.make_token(T![<=]),
+            '<' if self.consume('=') => self.make_token(T![<=]),
             '<' => self.make_token(T![<]),
-            '>' if self.compare('=') => self.make_token(T![>=]),
+            '>' if self.consume('=') => self.make_token(T![>=]),
             '>' => self.make_token(T![>]),
             '"' => self.string(),
             '0'..='9' => self.number(),
@@ -134,7 +146,7 @@ impl<'a> Scanner<'a> {
         self.chars.clone().nth(n).map(|(_, c)| c)
     }
 
-    fn compare(&mut self, expected: char) -> bool {
+    fn consume(&mut self, expected: char) -> bool {
         if self.peek(0) == Some(expected) {
             self.advance();
             true

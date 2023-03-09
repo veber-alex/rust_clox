@@ -1,5 +1,8 @@
+use std::ptr;
+
 use crate::{
     chunk::{Chunk, OpCode},
+    compiler::compile,
     value::Value,
 };
 
@@ -14,28 +17,40 @@ macro_rules! binary_op {
 
 const STACK_MAX: usize = 256;
 
-pub struct VM<'a> {
-    chunk: &'a Chunk,
+pub struct VM {
+    chunk: Chunk,
     ip: *const u8,
     stack: Vec<Value>,
     stack_top: *mut Value,
 }
 
-impl<'a> VM<'a> {
-    pub fn new(chunk: &'a Chunk) -> Self {
+impl VM {
+    pub fn new() -> Self {
         let mut stack = Vec::with_capacity(STACK_MAX);
         let stack_top = stack.as_mut_ptr();
 
         Self {
-            chunk,
-            ip: chunk.code.as_ptr(),
+            chunk: Chunk::new(),
+            ip: ptr::null(),
             stack,
             stack_top,
         }
     }
 
-    pub fn interpret(source: &str) -> InterpretResult {
-        todo!()
+    pub fn set_chunk(&mut self, chunk: Chunk) {
+        self.ip = chunk.code.as_ptr();
+        self.chunk = chunk;
+    }
+
+    pub fn interpret(&mut self, source: &str) -> InterpretResult {
+        let mut chunk = Chunk::new();
+
+        if !compile(source, &mut chunk) {
+            return InterpretResult::CompileError;
+        };
+
+        self.set_chunk(chunk);
+        self.run()
     }
 
     fn run(&mut self) -> InterpretResult {

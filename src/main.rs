@@ -6,8 +6,7 @@ use std::{
     process::exit,
 };
 
-use compiler::compile;
-use vm::InterpretResult;
+use vm::{InterpretResult, VM};
 
 #[macro_use]
 mod scanner;
@@ -19,10 +18,11 @@ mod vm;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let vm = VM::new();
 
     match args.as_slice() {
-        [_] => repl(),
-        [_, path] => run_file(path),
+        [_] => repl(vm),
+        [_, path] => run_file(path, vm),
         _ => {
             eprintln!("Usage: rust_clox [path]");
             exit(64)
@@ -30,20 +30,20 @@ fn main() {
     }
 }
 
-fn run_file(path: &str) {
+fn run_file(path: &str, mut vm: VM) {
     let Ok(file) = std::fs::read_to_string(path) else {
         eprintln!("Could not open file {path}");
         exit(74)
     };
 
-    match interpret(&file) {
+    match vm.interpret(&file) {
         InterpretResult::CompileError => exit(65),
         InterpretResult::RuntimeError => exit(70),
         InterpretResult::Ok => {}
     }
 }
 
-fn repl() {
+fn repl(mut vm: VM) {
     let mut line = String::new();
     let mut stdin = stdin().lock();
     let mut stdout = stdout().lock();
@@ -56,12 +56,7 @@ fn repl() {
             break;
         }
 
-        let _ = interpret(&line);
+        let _ = vm.interpret(&line);
         line.clear();
     }
-}
-
-fn interpret(source: &str) -> InterpretResult {
-    compile(source);
-    InterpretResult::Ok
 }
