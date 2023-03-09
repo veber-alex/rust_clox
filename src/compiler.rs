@@ -64,7 +64,7 @@ impl ParseRule {
         }
     }
 
-    const fn new(prefix: fn(&mut Parser<'_>), infix: fn(&mut Parser<'_>), precedence: u8) -> Self {
+    const fn both(prefix: fn(&mut Parser<'_>), infix: fn(&mut Parser<'_>), precedence: u8) -> Self {
         Self {
             prefix: Some(prefix),
             infix: Some(infix),
@@ -232,18 +232,31 @@ mod jump_table {
         let mut rules = [ParseRule::none(); mem::variant_count::<TokenKind>()];
 
         rules[T!['('] as usize] = ParseRule::prefix(grouping);
-        rules[T![-] as usize] = ParseRule::new(unary, binary, TERM);
+        rules[T![-] as usize] = ParseRule::both(unary, binary, TERM);
         rules[T![+] as usize] = ParseRule::infix(binary, TERM);
         rules[T![/] as usize] = ParseRule::infix(binary, FACTOR);
         rules[T![*] as usize] = ParseRule::infix(binary, FACTOR);
         rules[T![number] as usize] = ParseRule::prefix(number);
+        rules[T![false] as usize] = ParseRule::prefix(literal);
+        rules[T![true] as usize] = ParseRule::prefix(literal);
+        rules[T![nil] as usize] = ParseRule::prefix(literal);
+        rules[T![!] as usize] = ParseRule::prefix(unary);
 
         rules
     };
 
+    pub fn literal(parser: &mut Parser<'_>) {
+        match parser.previous.kind {
+            T![false] => parser.emit_byte(OpCode::OpFalse as u8),
+            T![true] => parser.emit_byte(OpCode::OpTrue as u8),
+            T![nil] => parser.emit_byte(OpCode::OpNil as u8),
+            _ => {}
+        }
+    }
+
     pub fn number(parser: &mut Parser<'_>) {
-        let value: Value = parser.previous.lexeme.parse().unwrap();
-        parser.emit_constant(value);
+        let value: f64 = parser.previous.lexeme.parse().unwrap();
+        parser.emit_constant(Value::Number(value));
     }
 
     pub fn grouping(parser: &mut Parser<'_>) {
@@ -260,6 +273,7 @@ mod jump_table {
         // Emit the operator instruction.
         match operator {
             T![-] => parser.emit_byte(OpCode::OpNegate as u8),
+            T![!] => parser.emit_byte(OpCode::OpNot as u8),
             _ => {}
         }
     }

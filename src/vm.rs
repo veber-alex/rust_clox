@@ -8,10 +8,12 @@ use crate::{
 
 // FIXME: Replace with trait impls on Value
 macro_rules! binary_op {
-    ($vm:expr, $op:tt) => {{
-        let b = $vm.pop();
-        let a = $vm.pop();
-        $vm.push(a $op b)
+    ($vm:expr, $value_type:expr, $op:tt) => {{
+        let (Value::Number(b), Value::Number(a)) = ($vm.pop(), $vm.pop()) else {
+            $vm.runtime_error("Operands must be numbers.");
+            return InterpretResult::RuntimeError
+        };
+        $vm.push($value_type(a $op b))
     }};
 }
 
@@ -26,23 +28,19 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        let mut stack = Vec::with_capacity(STACK_MAX);
-        let stack_top = stack.as_mut_ptr();
-
-        Self {
+        let mut vm = Self {
             chunk: Chunk::new(),
             ip: ptr::null(),
-            stack,
-            stack_top,
-        }
-    }
+            stack: Vec::with_capacity(STACK_MAX),
+            stack_top: ptr::null_mut(),
+        };
+        vm.reset_stack();
 
-    pub fn set_chunk(&mut self, chunk: Chunk) {
-        self.ip = chunk.code.as_ptr();
-        self.chunk = chunk;
+        vm
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
+        // FIXME: can we use the chunk in self instead ?
         let mut chunk = Chunk::new();
 
         if !compile(source, &mut chunk) {
@@ -50,10 +48,24 @@ impl VM {
         };
 
         self.set_chunk(chunk);
-        self.run()
+
+        // Safety: set_chunk() is called before run()
+        unsafe { self.run() }
     }
 
-    fn run(&mut self) -> InterpretResult {
+    fn set_chunk(&mut self, chunk: Chunk) {
+        self.ip = chunk.code.as_ptr();
+        self.chunk = chunk;
+    }
+
+    fn reset_stack(&mut self) {
+        self.stack_top = self.stack.as_mut_ptr();
+    }
+
+    // Safety: set_chunk() must be called before run()
+    // FIXME: combine set_chunk() and run() ?
+    // TODO: optimize the shit out of this loop + match
+    unsafe fn run(&mut self) -> InterpretResult {
         use OpCode::*;
 
         loop {
@@ -82,19 +94,35 @@ impl VM {
                     self.push(constant);
                 }
                 OpReturn => {
-                    println!("{}", self.pop());
+                    println!("{:?}", self.pop());
                     return InterpretResult::Ok;
                 }
                 OpNegate => {
-                    let val = self.pop();
-                    self.push(-val);
+                    let Value::Number(number) = self.pop() else {
+                        self.runtime_error("Operand must be a number.");
+                        return InterpretResult::RuntimeError
+                    };
+                    self.push(Value::Number(-number));
                 }
-                OpAdd => binary_op!(self, +),
-                OpSubtract => binary_op!(self, -),
-                OpMultiply => binary_op!(self, *),
-                OpDivide => binary_op!(self, /),
+                OpAdd => binary_op!(self, Value::Number, +),
+                OpSubtract => binary_op!(self, Value::Number, -),
+                OpMultiply => binary_op!(self, Value::Number, *),
+                OpDivide => binary_op!(self, Value::Number, /),
+                OpNil => self.push(Value::Nil),
+                OpTrue => self.push(Value::Boolean(true)),
+                OpFalse => self.push(Value::Boolean(false)),
+                OpNot => {
+                    let b: bool = self.pop().into();
+                    self.push(Value::Boolean(!b))
+                }
             }
         }
+    }
+
+    // Safety: a valid Value must exist at that distance
+    unsafe fn peek(&self, distance: isize) -> Value {
+        // Safety: a valid Value must exist at that distance
+        unsafe { *self.stack_top.offset(-1 - distance) }
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -107,6 +135,8 @@ impl VM {
         byte
     }
 
+    // FIXME: inline this method to the match loop for safety
+    // calling it in any other place is unsafe because the next bytecode may not be a constant
     fn read_constant(&mut self) -> Value {
         let byte = self.read_byte();
 
@@ -125,6 +155,16 @@ impl VM {
         // or is it? can we pop before push with valid bytecode ?
         unsafe { self.stack_top = self.stack_top.sub(1) };
         unsafe { *self.stack_top }
+    }
+
+    fn runtime_error(&mut self, msg: &str) {
+        eprintln!("{msg}");
+
+        let instruction = self.ip as usize - self.chunk.code.as_ptr() as usize - 1;
+        let line = self.chunk.lines[instruction];
+        eprintln!("[line {line}] in script");
+
+        self.reset_stack();
     }
 }
 

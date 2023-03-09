@@ -41,6 +41,7 @@ fn run_file(path: &str, mut vm: VM) {
     }
 }
 
+#[cfg(not(miri))]
 fn repl(mut vm: VM) {
     use rustyline::{history::MemHistory, Config, Editor};
 
@@ -50,5 +51,26 @@ fn repl(mut vm: VM) {
 
     while let Ok(line) = rl.readline("> ") {
         let _ = vm.interpret(&line);
+    }
+}
+
+#[cfg(miri)]
+fn repl(mut vm: VM) {
+    use std::io::{stdin, stdout, BufRead, Write};
+
+    let mut line = String::new();
+    let mut stdin = stdin().lock();
+    let mut stdout = stdout().lock();
+
+    loop {
+        print!("> ");
+        let _ = stdout.flush();
+
+        if let Ok(0) | Err(_) = stdin.read_line(&mut line) {
+            break;
+        }
+
+        let _ = vm.interpret(&line);
+        line.clear();
     }
 }

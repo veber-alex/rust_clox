@@ -4,10 +4,14 @@ use crate::value::Value;
 #[repr(u8)]
 pub enum OpCode {
     OpConstant,
+    OpNil,
+    OpTrue,
+    OpFalse,
     OpAdd,
     OpSubtract,
     OpMultiply,
     OpDivide,
+    OpNot,
     OpNegate,
     OpReturn,
 }
@@ -24,7 +28,7 @@ impl OpCode {
 pub struct Chunk {
     pub code: Vec<u8>,
     pub constants: Vec<Value>,
-    lines: Vec<usize>,
+    pub lines: Vec<usize>,
 }
 
 impl Chunk {
@@ -79,6 +83,10 @@ impl Chunk {
             OpSubtract => self.simple_instruction("OP_SUBTRACT", offset),
             OpMultiply => self.simple_instruction("OP_MULTIPLY", offset),
             OpDivide => self.simple_instruction("OP_DIVIDE", offset),
+            OpNil => self.simple_instruction("OP_NIL", offset),
+            OpTrue => self.simple_instruction("OP_TRUE", offset),
+            OpFalse => self.simple_instruction("OP_FALSE", offset),
+            OpNot => self.simple_instruction("OP_NOT", offset),
         }
     }
 
