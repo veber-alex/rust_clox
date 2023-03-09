@@ -69,7 +69,7 @@ pub enum TokenKind {
       (ERR) => {$crate::scanner::TokenKind::Error};
   }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub lexeme: &'a str,
@@ -217,17 +217,15 @@ impl<'a> Scanner<'a> {
     }
 
     fn number(&mut self) -> Token<'a> {
-        let mut c = self.peek(0);
-        while self.is_digit(c) {
-            c = self.advance();
+        while self.is_digit(self.peek(0)) {
+            self.advance();
         }
 
         if self.peek(0) == Some('.') && self.is_digit(self.peek(1)) {
             self.advance();
 
-            let mut c = self.peek(0);
-            while self.is_digit(c) {
-                c = self.advance();
+            while self.is_digit(self.peek(0)) {
+                self.advance();
             }
         }
 
@@ -235,9 +233,8 @@ impl<'a> Scanner<'a> {
     }
 
     fn identifier(&mut self) -> Token<'a> {
-        let mut c = self.peek(0);
-        while self.is_alpha(c) || self.is_digit(c) {
-            c = self.advance();
+        while self.is_alpha(self.peek(0)) || self.is_digit(self.peek(0)) {
+            self.advance();
         }
 
         self.make_token(self.identifier_type())

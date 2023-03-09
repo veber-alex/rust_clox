@@ -1,5 +1,6 @@
 #![feature(variant_count)]
 #![feature(char_indices_offset)]
+#![feature(const_mut_refs)]
 
 use std::{
     io::{stdin, stdout, BufRead, Write},

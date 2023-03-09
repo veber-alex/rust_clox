@@ -2,5 +2,6 @@
 rustflags = [
     "-Wclippy::undocumented_unsafe_blocks", 
     "-Wclippy::multiple_unsafe_ops_per_block", 
+    "-Wclippy::dbg_macro", 
     "-Wrust_2018_idioms",
 ]
