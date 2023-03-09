@@ -50,7 +50,9 @@ fn repl(mut vm: VM) {
     let mut rl: Editor<(), MemHistory> = Editor::with_history(config, history).unwrap();
 
     while let Ok(line) = rl.readline("> ") {
-        let _ = vm.interpret(&line);
+        if !line.is_empty() {
+            let _ = vm.interpret(&line);
+        }
     }
 }
 
@@ -70,7 +72,10 @@ fn repl(mut vm: VM) {
             break;
         }
 
-        let _ = vm.interpret(&line);
+        let trim_line = line.trim();
+        if !trim_line.is_empty() {
+            let _ = vm.interpret(trim_line);
+        }
         line.clear();
     }
 }

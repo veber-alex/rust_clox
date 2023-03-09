@@ -22,52 +22,52 @@ pub enum TokenKind {
     Print, Return, Super, This, True, Var, While,
   
     Eof, Error
-  }
+}
 
 #[rustfmt::skip]
-  macro_rules! T {
-      ('(') => {$crate::scanner::TokenKind::LeftParen};
-      (')') => {$crate::scanner::TokenKind::RightParen};
-      ('{') => {$crate::scanner::TokenKind::LeftBrace};
-      ('}') => {$crate::scanner::TokenKind::RightBrace};
-      (,) => {$crate::scanner::TokenKind::Comma};
-      (.) => {$crate::scanner::TokenKind::Dot};
-      (-) => {$crate::scanner::TokenKind::Minus};
-      (+) => {$crate::scanner::TokenKind::Plus};
-      (;) => {$crate::scanner::TokenKind::Semicolon};
-      (/) => {$crate::scanner::TokenKind::Slash};
-      (*) => {$crate::scanner::TokenKind::Star};
-      (!) => {$crate::scanner::TokenKind::Bang};
-      (!=) => {$crate::scanner::TokenKind::BangEqual};
-      (=) => {$crate::scanner::TokenKind::Equal};
-      (==) => {$crate::scanner::TokenKind::EqualEqual};
-      (>) => {$crate::scanner::TokenKind::Greater};
-      (>=) => {$crate::scanner::TokenKind::GreaterEqual};
-      (<) => {$crate::scanner::TokenKind::Less};
-      (<=) => {$crate::scanner::TokenKind::LessEqual};
-      (ident) => {$crate::scanner::TokenKind::Identifier};
-      (str) => {$crate::scanner::TokenKind::String};
-      (number) => {$crate::scanner::TokenKind::Number};
-      (and) => {$crate::scanner::TokenKind::And};
-      (class) => {$crate::scanner::TokenKind::Class};
-      (else) => {$crate::scanner::TokenKind::Else};
-      (false) => {$crate::scanner::TokenKind::False};
-      (fun) => {$crate::scanner::TokenKind::Fun};
-      (for) => {$crate::scanner::TokenKind::For};
-      (if) => {$crate::scanner::TokenKind::If};
-      (nil) => {$crate::scanner::TokenKind::Nil};
-      (or) => {$crate::scanner::TokenKind::Or};
-      (print) => {$crate::scanner::TokenKind::Print};
-      (return) => {$crate::scanner::TokenKind::Return};
-      (super) => {$crate::scanner::TokenKind::Super};
-      (this) => {$crate::scanner::TokenKind::This};
-      (true) => {$crate::scanner::TokenKind::True};
-      (var) => {$crate::scanner::TokenKind::Var};
-      (while) => {$crate::scanner::TokenKind::While};
-      (break) => {$crate::scanner::TokenKind::Break};
-      (EOF) => {$crate::scanner::TokenKind::Eof};
-      (ERR) => {$crate::scanner::TokenKind::Error};
-  }
+macro_rules! T {
+    ('(') => {$crate::scanner::TokenKind::LeftParen};
+    (')') => {$crate::scanner::TokenKind::RightParen};
+    ('{') => {$crate::scanner::TokenKind::LeftBrace};
+    ('}') => {$crate::scanner::TokenKind::RightBrace};
+    (,) => {$crate::scanner::TokenKind::Comma};
+    (.) => {$crate::scanner::TokenKind::Dot};
+    (-) => {$crate::scanner::TokenKind::Minus};
+    (+) => {$crate::scanner::TokenKind::Plus};
+    (;) => {$crate::scanner::TokenKind::Semicolon};
+    (/) => {$crate::scanner::TokenKind::Slash};
+    (*) => {$crate::scanner::TokenKind::Star};
+    (!) => {$crate::scanner::TokenKind::Bang};
+    (!=) => {$crate::scanner::TokenKind::BangEqual};
+    (=) => {$crate::scanner::TokenKind::Equal};
+    (==) => {$crate::scanner::TokenKind::EqualEqual};
+    (>) => {$crate::scanner::TokenKind::Greater};
+    (>=) => {$crate::scanner::TokenKind::GreaterEqual};
+    (<) => {$crate::scanner::TokenKind::Less};
+    (<=) => {$crate::scanner::TokenKind::LessEqual};
+    (ident) => {$crate::scanner::TokenKind::Identifier};
+    (str) => {$crate::scanner::TokenKind::String};
+    (number) => {$crate::scanner::TokenKind::Number};
+    (and) => {$crate::scanner::TokenKind::And};
+    (class) => {$crate::scanner::TokenKind::Class};
+    (else) => {$crate::scanner::TokenKind::Else};
+    (false) => {$crate::scanner::TokenKind::False};
+    (fun) => {$crate::scanner::TokenKind::Fun};
+    (for) => {$crate::scanner::TokenKind::For};
+    (if) => {$crate::scanner::TokenKind::If};
+    (nil) => {$crate::scanner::TokenKind::Nil};
+    (or) => {$crate::scanner::TokenKind::Or};
+    (print) => {$crate::scanner::TokenKind::Print};
+    (return) => {$crate::scanner::TokenKind::Return};
+    (super) => {$crate::scanner::TokenKind::Super};
+    (this) => {$crate::scanner::TokenKind::This};
+    (true) => {$crate::scanner::TokenKind::True};
+    (var) => {$crate::scanner::TokenKind::Var};
+    (while) => {$crate::scanner::TokenKind::While};
+    (break) => {$crate::scanner::TokenKind::Break};
+    (EOF) => {$crate::scanner::TokenKind::Eof};
+    (ERR) => {$crate::scanner::TokenKind::Error};
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {
@@ -273,6 +273,29 @@ impl<'a> Scanner<'a> {
             kind
         } else {
             T![ident]
+        }
+    }
+
+    // TODO: bench and compare against above code
+    fn identifier_type2(&self) -> TokenKind {
+        match self.lexme().as_bytes() {
+            b"and" => T![and],
+            b"class" => T![class],
+            b"else" => T![else],
+            b"if" => T![if],
+            b"nil" => T![nil],
+            b"or" => T![or],
+            b"print" => T![print],
+            b"return" => T![return],
+            b"super" => T![super],
+            b"var" => T![var],
+            b"while" => T![while],
+            b"false" => T![false],
+            b"for" => T![for],
+            b"fun" => T![fun],
+            b"this" => T![this],
+            b"true" => T![true],
+            _ => T![ident],
         }
     }
 }
