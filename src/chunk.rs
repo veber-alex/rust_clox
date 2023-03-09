@@ -1,22 +1,23 @@
 use crate::value::Value;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
+#[allow(non_camel_case_types)]
 pub enum OpCode {
-    OpConstant,
-    OpNil,
-    OpTrue,
-    OpFalse,
-    OpEqual,
-    OpGreater,
-    OpLess,
-    OpAdd,
-    OpSubtract,
-    OpMultiply,
-    OpDivide,
-    OpNot,
-    OpNegate,
-    OpReturn,
+    OP_CONSTANT,
+    OP_NIL,
+    OP_TRUE,
+    OP_FALSE,
+    OP_EQUAL,
+    OP_GREATER,
+    OP_LESS,
+    OP_ADD,
+    OP_SUBSTRACT,
+    OP_MULTIPLY,
+    OP_DIVIDE,
+    OP_NOT,
+    OP_NEGATE,
+    OP_RETURN,
 }
 
 impl OpCode {
@@ -79,31 +80,22 @@ impl Chunk {
         // Safety: byte is a valid opcode by compiler construction
         let instruction = unsafe { OpCode::from_u8_unchecked(byte) };
         match instruction {
-            OpReturn => self.simple_instruction("OP_RETURN", offset),
-            OpConstant => self.constant_instruction("OP_CONSTANT", offset),
-            OpNegate => self.simple_instruction("OP_NEGATE", offset),
-            OpAdd => self.simple_instruction("OP_ADD", offset),
-            OpSubtract => self.simple_instruction("OP_SUBTRACT", offset),
-            OpMultiply => self.simple_instruction("OP_MULTIPLY", offset),
-            OpDivide => self.simple_instruction("OP_DIVIDE", offset),
-            OpNil => self.simple_instruction("OP_NIL", offset),
-            OpTrue => self.simple_instruction("OP_TRUE", offset),
-            OpFalse => self.simple_instruction("OP_FALSE", offset),
-            OpNot => self.simple_instruction("OP_NOT", offset),
-            OpEqual => self.simple_instruction("OP_EQUAL", offset),
-            OpGreater => self.simple_instruction("OP_GREATER", offset),
-            OpLess => self.simple_instruction("OP_LESS", offset),
+            OP_CONSTANT => self.constant_instruction(instruction, offset),
+            OP_RETURN | OP_NEGATE | OP_ADD | OP_SUBSTRACT | OP_MULTIPLY | OP_DIVIDE | OP_NIL
+            | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS => {
+                self.simple_instruction(instruction, offset)
+            }
         }
     }
 
-    fn simple_instruction(&self, name: &str, offset: usize) -> usize {
-        println!("{name}");
+    fn simple_instruction(&self, op_code: OpCode, offset: usize) -> usize {
+        println!("{op_code:?}");
         offset + 1
     }
 
-    fn constant_instruction(&self, name: &str, offset: usize) -> usize {
+    fn constant_instruction(&self, op_code: OpCode, offset: usize) -> usize {
         let constant_index = self.code[offset + 1];
-        print!("{name:16} {constant_index:4} ");
+        print!("{op_code:16?} {constant_index:4} ");
         println!("'{:?}'", self.constants[constant_index as usize]);
         offset + 2
     }

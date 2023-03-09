@@ -115,6 +115,11 @@ impl<'a> Parser<'a> {
     }
 
     // FIXME: Can this take an opcode and not a byte?
+    fn emit_opcode(&mut self, op_code: OpCode) {
+        let line = self.previous.line;
+        self.current_chunk().write_chunk(op_code as u8, line);
+    }
+
     fn emit_byte(&mut self, byte: u8) {
         let line = self.previous.line;
         self.current_chunk().write_chunk(byte, line);
@@ -127,7 +132,7 @@ impl<'a> Parser<'a> {
 
     fn emit_constant(&mut self, value: Value) {
         let index = self.make_constant(value);
-        self.emit_bytes(OpCode::OpConstant as u8, index);
+        self.emit_bytes(OpCode::OP_CONSTANT as u8, index);
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
@@ -152,7 +157,7 @@ impl<'a> Parser<'a> {
     }
 
     fn emit_return(&mut self) {
-        self.emit_byte(OpCode::OpReturn as u8)
+        self.emit_opcode(OpCode::OP_RETURN)
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -253,9 +258,9 @@ mod jump_table {
 
     pub fn literal(parser: &mut Parser<'_>) {
         match parser.previous.kind {
-            T![false] => parser.emit_byte(OpCode::OpFalse as u8),
-            T![true] => parser.emit_byte(OpCode::OpTrue as u8),
-            T![nil] => parser.emit_byte(OpCode::OpNil as u8),
+            T![false] => parser.emit_opcode(OpCode::OP_FALSE),
+            T![true] => parser.emit_opcode(OpCode::OP_TRUE),
+            T![nil] => parser.emit_opcode(OpCode::OP_NIL),
             _ => {}
         }
     }
@@ -278,8 +283,8 @@ mod jump_table {
 
         // Emit the operator instruction.
         match operator {
-            T![-] => parser.emit_byte(OpCode::OpNegate as u8),
-            T![!] => parser.emit_byte(OpCode::OpNot as u8),
+            T![-] => parser.emit_opcode(OpCode::OP_NEGATE),
+            T![!] => parser.emit_opcode(OpCode::OP_NOT),
             _ => {}
         }
     }
@@ -290,16 +295,16 @@ mod jump_table {
         parser.parse_precedence(rule.precedence + 1);
 
         match operator {
-            T![!=] => parser.emit_bytes(OpCode::OpEqual as u8, OpCode::OpNot as u8),
-            T![==] => parser.emit_byte(OpCode::OpEqual as u8),
-            T![>] => parser.emit_byte(OpCode::OpGreater as u8),
-            T![>=] => parser.emit_bytes(OpCode::OpLess as u8, OpCode::OpNot as u8),
-            T![<] => parser.emit_byte(OpCode::OpLess as u8),
-            T![<=] => parser.emit_bytes(OpCode::OpGreater as u8, OpCode::OpNot as u8),
-            T![+] => parser.emit_byte(OpCode::OpAdd as u8),
-            T![-] => parser.emit_byte(OpCode::OpSubtract as u8),
-            T![*] => parser.emit_byte(OpCode::OpMultiply as u8),
-            T![/] => parser.emit_byte(OpCode::OpDivide as u8),
+            T![!=] => parser.emit_bytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8),
+            T![==] => parser.emit_opcode(OpCode::OP_EQUAL),
+            T![>] => parser.emit_opcode(OpCode::OP_GREATER),
+            T![>=] => parser.emit_bytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8),
+            T![<] => parser.emit_opcode(OpCode::OP_LESS),
+            T![<=] => parser.emit_bytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8),
+            T![+] => parser.emit_opcode(OpCode::OP_ADD),
+            T![-] => parser.emit_opcode(OpCode::OP_SUBSTRACT),
+            T![*] => parser.emit_opcode(OpCode::OP_MULTIPLY),
+            T![/] => parser.emit_opcode(OpCode::OP_DIVIDE),
             _ => {}
         }
     }

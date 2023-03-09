@@ -89,39 +89,39 @@ impl VM {
             let instruction = unsafe { OpCode::from_u8_unchecked(byte) };
 
             match instruction {
-                OpConstant => {
+                OP_CONSTANT => {
                     let constant = self.read_constant();
                     self.push(constant);
                 }
-                OpReturn => {
+                OP_RETURN => {
                     println!("{:?}", self.pop());
                     return InterpretResult::Ok;
                 }
-                OpNegate => {
+                OP_NEGATE => {
                     let Value::Number(number) = self.pop() else {
                         self.runtime_error("Operand must be a number.");
                         return InterpretResult::RuntimeError
                     };
                     self.push(Value::Number(-number));
                 }
-                OpAdd => binary_op!(self, Value::Number, +),
-                OpSubtract => binary_op!(self, Value::Number, -),
-                OpMultiply => binary_op!(self, Value::Number, *),
-                OpDivide => binary_op!(self, Value::Number, /),
-                OpNil => self.push(Value::Nil),
-                OpTrue => self.push(Value::Boolean(true)),
-                OpFalse => self.push(Value::Boolean(false)),
-                OpNot => {
+                OP_ADD => binary_op!(self, Value::Number, +),
+                OP_SUBSTRACT => binary_op!(self, Value::Number, -),
+                OP_MULTIPLY => binary_op!(self, Value::Number, *),
+                OP_DIVIDE => binary_op!(self, Value::Number, /),
+                OP_NIL => self.push(Value::Nil),
+                OP_TRUE => self.push(Value::Boolean(true)),
+                OP_FALSE => self.push(Value::Boolean(false)),
+                OP_NOT => {
                     let b: bool = self.pop().into();
                     self.push(Value::Boolean(!b))
                 }
-                OpEqual => {
+                OP_EQUAL => {
                     let b = self.pop();
                     let a = self.pop();
                     self.push(Value::Boolean(a == b))
                 }
-                OpGreater => binary_op!(self, Value::Boolean, >),
-                OpLess => binary_op!(self, Value::Boolean, <),
+                OP_GREATER => binary_op!(self, Value::Boolean, >),
+                OP_LESS => binary_op!(self, Value::Boolean, <),
             }
         }
     }
