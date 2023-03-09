@@ -241,6 +241,12 @@ mod jump_table {
         rules[T![true] as usize] = ParseRule::prefix(literal);
         rules[T![nil] as usize] = ParseRule::prefix(literal);
         rules[T![!] as usize] = ParseRule::prefix(unary);
+        rules[T![!=] as usize] = ParseRule::infix(binary, EQUALITY);
+        rules[T![==] as usize] = ParseRule::infix(binary, EQUALITY);
+        rules[T![>] as usize] = ParseRule::infix(binary, COMPARISON);
+        rules[T![>=] as usize] = ParseRule::infix(binary, COMPARISON);
+        rules[T![<] as usize] = ParseRule::infix(binary, COMPARISON);
+        rules[T![<=] as usize] = ParseRule::infix(binary, COMPARISON);
 
         rules
     };
@@ -284,6 +290,12 @@ mod jump_table {
         parser.parse_precedence(rule.precedence + 1);
 
         match operator {
+            T![!=] => parser.emit_bytes(OpCode::OpEqual as u8, OpCode::OpNot as u8),
+            T![==] => parser.emit_byte(OpCode::OpEqual as u8),
+            T![>] => parser.emit_byte(OpCode::OpGreater as u8),
+            T![>=] => parser.emit_bytes(OpCode::OpLess as u8, OpCode::OpNot as u8),
+            T![<] => parser.emit_byte(OpCode::OpLess as u8),
+            T![<=] => parser.emit_bytes(OpCode::OpGreater as u8, OpCode::OpNot as u8),
             T![+] => parser.emit_byte(OpCode::OpAdd as u8),
             T![-] => parser.emit_byte(OpCode::OpSubtract as u8),
             T![*] => parser.emit_byte(OpCode::OpMultiply as u8),

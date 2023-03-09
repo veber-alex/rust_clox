@@ -1,4 +1,5 @@
-#[derive(Clone, Copy)]
+// FIXME: This PartialEq will not be good later
+#[derive(Clone, Copy, PartialEq)]
 pub enum Value {
     Nil,
     Number(f64),

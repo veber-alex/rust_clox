@@ -115,13 +115,19 @@ impl VM {
                     let b: bool = self.pop().into();
                     self.push(Value::Boolean(!b))
                 }
+                OpEqual => {
+                    let b = self.pop();
+                    let a = self.pop();
+                    self.push(Value::Boolean(a == b))
+                }
+                OpGreater => binary_op!(self, Value::Boolean, >),
+                OpLess => binary_op!(self, Value::Boolean, <),
             }
         }
     }
 
-    // Safety: a valid Value must exist at that distance
-    unsafe fn peek(&self, distance: isize) -> Value {
-        // Safety: a valid Value must exist at that distance
+    fn peek(&self, distance: isize) -> Value {
+        // Safety: a valid Value exists at that distance by compiler bytecode construction
         unsafe { *self.stack_top.offset(-1 - distance) }
     }
 

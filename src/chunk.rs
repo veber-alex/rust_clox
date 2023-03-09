@@ -7,9 +7,9 @@ pub enum OpCode {
     OpNil,
     OpTrue,
     OpFalse,
-    // OpEqual,
-    // OpGreater,
-    // OpLess,
+    OpEqual,
+    OpGreater,
+    OpLess,
     OpAdd,
     OpSubtract,
     OpMultiply,
@@ -90,6 +90,9 @@ impl Chunk {
             OpTrue => self.simple_instruction("OP_TRUE", offset),
             OpFalse => self.simple_instruction("OP_FALSE", offset),
             OpNot => self.simple_instruction("OP_NOT", offset),
+            OpEqual => self.simple_instruction("OP_EQUAL", offset),
+            OpGreater => self.simple_instruction("OP_GREATER", offset),
+            OpLess => self.simple_instruction("OP_LESS", offset),
         }
     }
 
