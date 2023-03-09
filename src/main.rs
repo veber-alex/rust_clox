@@ -2,10 +2,7 @@
 #![feature(char_indices_offset)]
 #![feature(const_mut_refs)]
 
-use std::{
-    io::{stdin, stdout, BufRead, Write},
-    process::exit,
-};
+use std::process::exit;
 
 use vm::{InterpretResult, VM};
 
@@ -45,19 +42,13 @@ fn run_file(path: &str, mut vm: VM) {
 }
 
 fn repl(mut vm: VM) {
-    let mut line = String::new();
-    let mut stdin = stdin().lock();
-    let mut stdout = stdout().lock();
+    use rustyline::{history::MemHistory, Config, Editor};
 
-    loop {
-        print!("> ");
-        let _ = stdout.flush();
+    let config = Config::builder().auto_add_history(true).build();
+    let history = MemHistory::new();
+    let mut rl: Editor<(), MemHistory> = Editor::with_history(config, history).unwrap();
 
-        if let Ok(0) | Err(_) = stdin.read_line(&mut line) {
-            break;
-        }
-
+    while let Ok(line) = rl.readline("> ") {
         let _ = vm.interpret(&line);
-        line.clear();
     }
 }
