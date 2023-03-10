@@ -3,6 +3,7 @@ use std::ptr;
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::compile,
+    object::{as_objstring_str, get_kind, take_string, ObjKind},
     value::Value,
 };
 
@@ -104,7 +105,32 @@ impl VM {
                     };
                     self.push(Value::Number(-number));
                 }
-                OP_ADD => binary_op!(self, Value::Number, +),
+                OP_ADD => match (self.pop(), self.pop()) {
+                    (Value::Number(b), Value::Number(a)) => self.push(Value::Number(a + b)),
+                    (Value::Obj(b), Value::Obj(a))
+                        if get_kind(a) == ObjKind::OBJ_STRING
+                            && get_kind(b) == ObjKind::OBJ_STRING =>
+                    {
+                        // Safety: obj is a valid ObjString due to kind check
+                        let b = unsafe { as_objstring_str(b) }.as_bytes();
+                        // Safety: obj is a valid ObjString due to kind check
+                        let a = unsafe { as_objstring_str(a) }.as_bytes();
+                        let len = a.len() + b.len();
+                        let ptr: *mut u8 = Box::into_raw(Box::<[u8]>::new_uninit_slice(len)).cast();
+
+                        // Safety: We have enough capacity due to allocation above
+                        unsafe {
+                            ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
+                            ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len())
+                        }
+
+                        self.push(Value::Obj(take_string(ptr, len).cast()))
+                    }
+                    _ => {
+                        self.runtime_error("Operands must be two numbers or two strings.");
+                        return InterpretResult::RuntimeError;
+                    }
+                },
                 OP_SUBSTRACT => binary_op!(self, Value::Number, -),
                 OP_MULTIPLY => binary_op!(self, Value::Number, *),
                 OP_DIVIDE => binary_op!(self, Value::Number, /),

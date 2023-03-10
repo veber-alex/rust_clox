@@ -21,10 +21,29 @@ pub struct ObjString {
     pub ptr: NonNull<str>,
 }
 
+pub fn get_kind(obj_ptr: NonNull<Obj>) -> ObjKind {
+    // Safety: Obj is valid and alive
+    unsafe { (*obj_ptr.as_ptr()).kind }
+}
+
+// Safety: Obj must be of type ObjString
+pub unsafe fn as_objstring_str<'a>(obj_ptr: NonNull<Obj>) -> &'a str {
+    let string: *mut ObjString = obj_ptr.as_ptr().cast();
+
+    // Safety: string is ObjString and valid and alive
+    unsafe { &*(*string).ptr.as_ptr() }
+}
+
 pub fn copy_string(lexeme: &str) -> NonNull<ObjString> {
+    // FIXME: This is probably suboptimal perf
     let boxed = String::from(lexeme).into_boxed_str();
     let ptr = NonNull::new(Box::into_raw(boxed)).unwrap();
 
+    allocate_string(ptr)
+}
+
+pub fn take_string(ptr: *mut u8, len: usize) -> NonNull<ObjString> {
+    let ptr = NonNull::new(std::ptr::slice_from_raw_parts_mut(ptr, len) as *mut str).unwrap();
     allocate_string(ptr)
 }
 
@@ -46,5 +65,5 @@ fn allocate_object(kind: ObjKind) -> *mut Obj {
     // Safety: types are compatible due to layout
     unsafe { obj.write(Obj { kind }) };
 
-    obj.cast()
+    obj
 }
