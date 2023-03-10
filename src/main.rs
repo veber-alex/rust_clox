@@ -2,7 +2,6 @@
 #![feature(char_indices_offset)]
 #![feature(const_mut_refs)]
 #![feature(let_chains)]
-#![feature(new_uninit)]
 
 use std::process::exit;
 

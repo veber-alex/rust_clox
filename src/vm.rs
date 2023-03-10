@@ -3,7 +3,7 @@ use std::ptr;
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::compile,
-    memory::free_objects,
+    memory::{allocate_memory, free_objects},
     object::{Obj, ObjKind, ObjPtr, ObjString},
     value::Value,
 };
@@ -119,22 +119,8 @@ impl VM {
                         self.push(Value::Number(a + b))
                     }
                     (Value::Obj(b), Value::Obj(a)) if a.is_string() && b.is_string() => {
-                        self.pop();
-                        self.pop();
-                        // Safety: obj is a valid ObjString due to kind check
-                        let b = unsafe { b.as_string_str() }.as_bytes();
-                        // Safety: obj is a valid ObjString due to kind check
-                        let a = unsafe { a.as_string_str() }.as_bytes();
-                        let len = a.len() + b.len();
-                        let ptr: *mut u8 = Box::into_raw(Box::<[u8]>::new_uninit_slice(len)).cast();
-
-                        // Safety: We have enough capacity due to allocation above
-                        unsafe {
-                            ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
-                            ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len())
-                        }
-                        let obj = self.take_string(ptr, len);
-                        self.push(Value::Obj(obj))
+                        // Safety: a and b are ObjString due to kind check
+                        unsafe { self.concatenate(a, b) };
                     }
                     _ => {
                         self.runtime_error("Operands must be two numbers or two strings.");
@@ -209,12 +195,33 @@ impl VM {
         self.reset_stack();
     }
 
-    pub fn copy_string(&mut self, lexeme: &str) -> ObjPtr {
-        // FIXME: This is probably suboptimal perf
-        let boxed = String::from(lexeme).into_boxed_str();
-        let ptr = Box::into_raw(boxed);
+    // Safety: a and b must be ObjString
+    unsafe fn concatenate(&mut self, a: ObjPtr, b: ObjPtr) {
+        self.pop();
+        self.pop();
+        // Safety: obj is a valid ObjString due to kind check
+        let b = unsafe { b.as_string_str() };
+        // Safety: obj is a valid ObjString due to kind check
+        let a = unsafe { a.as_string_str() };
+        let len = a.len() + b.len();
+        let ptr: *mut u8 = allocate_memory(len);
 
-        ObjPtr::new(self.allocate_string(ptr).cast())
+        // Safety: We have enough capacity due to allocation above
+        unsafe {
+            ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
+            ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len())
+        }
+        let obj = self.take_string(ptr, len);
+        self.push(Value::Obj(obj))
+    }
+
+    pub fn copy_string(&mut self, lexeme: &str) -> ObjPtr {
+        let len = lexeme.len();
+        let ptr = allocate_memory::<u8>(len);
+        // Safety: dst is valid and non overlapping with src
+        unsafe { ptr::copy_nonoverlapping(lexeme.as_ptr(), ptr, len) }
+
+        self.take_string(ptr, lexeme.len())
     }
 
     fn take_string(&mut self, ptr: *mut u8, len: usize) -> ObjPtr {
@@ -235,7 +242,7 @@ impl VM {
     // TODO: Should this be generic?
     fn allocate_object(&mut self, kind: ObjKind) -> ObjPtr {
         let obj: *mut Obj = match kind {
-            ObjKind::OBJ_STRING => Box::into_raw(Box::<ObjString>::new_uninit()).cast(),
+            ObjKind::OBJ_STRING => allocate_memory::<ObjString>(1).cast(),
         };
 
         // Safety: types are compatible due to layout
