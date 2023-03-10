@@ -227,6 +227,7 @@ mod jump_table {
     use crate::{
         chunk::OpCode,
         compiler::{ParseRule, Parser, Precedence},
+        object::copy_string,
         scanner::TokenKind,
         value::Value,
     };
@@ -236,16 +237,17 @@ mod jump_table {
         use Precedence::*;
         let mut rules = [ParseRule::none(); mem::variant_count::<TokenKind>()];
 
-        rules[T!['('] as usize] = ParseRule::prefix(grouping);
         rules[T![-] as usize] = ParseRule::both(unary, binary, TERM);
-        rules[T![+] as usize] = ParseRule::infix(binary, TERM);
-        rules[T![/] as usize] = ParseRule::infix(binary, FACTOR);
-        rules[T![*] as usize] = ParseRule::infix(binary, FACTOR);
+        rules[T!['('] as usize] = ParseRule::prefix(grouping);
         rules[T![number] as usize] = ParseRule::prefix(number);
         rules[T![false] as usize] = ParseRule::prefix(literal);
         rules[T![true] as usize] = ParseRule::prefix(literal);
         rules[T![nil] as usize] = ParseRule::prefix(literal);
+        rules[T![str] as usize] = ParseRule::prefix(string);
         rules[T![!] as usize] = ParseRule::prefix(unary);
+        rules[T![+] as usize] = ParseRule::infix(binary, TERM);
+        rules[T![/] as usize] = ParseRule::infix(binary, FACTOR);
+        rules[T![*] as usize] = ParseRule::infix(binary, FACTOR);
         rules[T![!=] as usize] = ParseRule::infix(binary, EQUALITY);
         rules[T![==] as usize] = ParseRule::infix(binary, EQUALITY);
         rules[T![>] as usize] = ParseRule::infix(binary, COMPARISON);
@@ -256,7 +258,14 @@ mod jump_table {
         rules
     };
 
-    pub fn literal(parser: &mut Parser<'_>) {
+    fn string(parser: &mut Parser<'_>) {
+        parser.emit_constant(Value::Obj({
+            let lexeme = parser.previous.lexeme;
+            copy_string(&lexeme[1..][..lexeme.len() - 2]).cast()
+        }))
+    }
+
+    fn literal(parser: &mut Parser<'_>) {
         match parser.previous.kind {
             T![false] => parser.emit_opcode(OpCode::OP_FALSE),
             T![true] => parser.emit_opcode(OpCode::OP_TRUE),
@@ -265,17 +274,17 @@ mod jump_table {
         }
     }
 
-    pub fn number(parser: &mut Parser<'_>) {
+    fn number(parser: &mut Parser<'_>) {
         let value: f64 = parser.previous.lexeme.parse().unwrap();
         parser.emit_constant(Value::Number(value));
     }
 
-    pub fn grouping(parser: &mut Parser<'_>) {
+    fn grouping(parser: &mut Parser<'_>) {
         parser.expression();
         parser.consume(T![')'], "Expect ')' after expression.")
     }
 
-    pub fn unary(parser: &mut Parser<'_>) {
+    fn unary(parser: &mut Parser<'_>) {
         let operator = parser.previous.kind;
 
         // Compile the operand.
@@ -289,7 +298,7 @@ mod jump_table {
         }
     }
 
-    pub fn binary(parser: &mut Parser<'_>) {
+    fn binary(parser: &mut Parser<'_>) {
         let operator = parser.previous.kind;
         let rule = parser.get_rule(operator);
         parser.parse_precedence(rule.precedence + 1);
