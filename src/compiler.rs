@@ -2,11 +2,12 @@ use crate::{
     chunk::{Chunk, OpCode},
     scanner::{Scanner, Token, TokenKind},
     value::Value,
+    vm::VM,
 };
 
-pub fn compile(source: &str, chunk: &mut Chunk) -> bool {
+pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
     let scanner = Scanner::new(source);
-    let mut parser = Parser::new(scanner, chunk);
+    let mut parser = Parser::new(vm, scanner, chunk);
 
     parser.advance();
     parser.expression();
@@ -80,10 +81,11 @@ pub struct Parser<'a> {
     had_error: bool,
     panic_mode: bool,
     chunk: &'a mut Chunk,
+    vm: &'a mut VM,
 }
 
 impl<'a> Parser<'a> {
-    fn new(scanner: Scanner<'a>, chunk: &'a mut Chunk) -> Self {
+    fn new(vm: &'a mut VM, scanner: Scanner<'a>, chunk: &'a mut Chunk) -> Self {
         Self {
             scanner,
             current: Token::dummy(),
@@ -91,6 +93,7 @@ impl<'a> Parser<'a> {
             had_error: false,
             panic_mode: false,
             chunk,
+            vm,
         }
     }
 
@@ -227,7 +230,6 @@ mod jump_table {
     use crate::{
         chunk::OpCode,
         compiler::{ParseRule, Parser, Precedence},
-        object::copy_string,
         scanner::TokenKind,
         value::Value,
     };
@@ -259,10 +261,9 @@ mod jump_table {
     };
 
     fn string(parser: &mut Parser<'_>) {
-        parser.emit_constant(Value::Obj({
-            let lexeme = parser.previous.lexeme;
-            copy_string(&lexeme[1..][..lexeme.len() - 2]).cast()
-        }))
+        let lexeme = parser.previous.lexeme;
+        let obj = parser.vm.copy_string(&lexeme[1..][..lexeme.len() - 2]);
+        parser.emit_constant(Value::Obj(obj))
     }
 
     fn literal(parser: &mut Parser<'_>) {

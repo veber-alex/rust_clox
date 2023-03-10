@@ -3,7 +3,8 @@ use std::ptr;
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::compile,
-    object::{as_objstring_str, get_kind, take_string, ObjKind},
+    memory::free_objects,
+    object::{Obj, ObjKind, ObjPtr, ObjString},
     value::Value,
 };
 
@@ -25,6 +26,7 @@ pub struct VM {
     ip: *const u8,
     stack: Vec<Value>,
     stack_top: *mut Value,
+    pub objects: ObjPtr,
 }
 
 impl VM {
@@ -34,6 +36,7 @@ impl VM {
             ip: ptr::null(),
             stack: Vec::with_capacity(STACK_MAX),
             stack_top: ptr::null_mut(),
+            objects: ObjPtr::null(),
         };
         vm.reset_stack();
 
@@ -44,7 +47,7 @@ impl VM {
         // FIXME: can we use the chunk in self instead ?
         let mut chunk = Chunk::new();
 
-        if !compile(source, &mut chunk) {
+        if !compile(self, source, &mut chunk) {
             return InterpretResult::CompileError;
         };
 
@@ -52,6 +55,10 @@ impl VM {
 
         // Safety: set_chunk() is called before run()
         unsafe { self.run() }
+    }
+
+    pub fn free_vm(&mut self) {
+        free_objects(self)
     }
 
     fn set_chunk(&mut self, chunk: Chunk) {
@@ -105,16 +112,19 @@ impl VM {
                     };
                     self.push(Value::Number(-number));
                 }
-                OP_ADD => match (self.pop(), self.pop()) {
-                    (Value::Number(b), Value::Number(a)) => self.push(Value::Number(a + b)),
-                    (Value::Obj(b), Value::Obj(a))
-                        if get_kind(a) == ObjKind::OBJ_STRING
-                            && get_kind(b) == ObjKind::OBJ_STRING =>
-                    {
+                OP_ADD => match (self.peek(0), self.peek(1)) {
+                    (Value::Number(b), Value::Number(a)) => {
+                        self.pop();
+                        self.pop();
+                        self.push(Value::Number(a + b))
+                    }
+                    (Value::Obj(b), Value::Obj(a)) if a.is_string() && b.is_string() => {
+                        self.pop();
+                        self.pop();
                         // Safety: obj is a valid ObjString due to kind check
-                        let b = unsafe { as_objstring_str(b) }.as_bytes();
+                        let b = unsafe { b.as_string_str() }.as_bytes();
                         // Safety: obj is a valid ObjString due to kind check
-                        let a = unsafe { as_objstring_str(a) }.as_bytes();
+                        let a = unsafe { a.as_string_str() }.as_bytes();
                         let len = a.len() + b.len();
                         let ptr: *mut u8 = Box::into_raw(Box::<[u8]>::new_uninit_slice(len)).cast();
 
@@ -123,8 +133,8 @@ impl VM {
                             ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
                             ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len())
                         }
-
-                        self.push(Value::Obj(take_string(ptr, len).cast()))
+                        let obj = self.take_string(ptr, len);
+                        self.push(Value::Obj(obj))
                     }
                     _ => {
                         self.runtime_error("Operands must be two numbers or two strings.");
@@ -197,6 +207,49 @@ impl VM {
         eprintln!("[line {line}] in script");
 
         self.reset_stack();
+    }
+
+    pub fn copy_string(&mut self, lexeme: &str) -> ObjPtr {
+        // FIXME: This is probably suboptimal perf
+        let boxed = String::from(lexeme).into_boxed_str();
+        let ptr = Box::into_raw(boxed);
+
+        ObjPtr::new(self.allocate_string(ptr).cast())
+    }
+
+    fn take_string(&mut self, ptr: *mut u8, len: usize) -> ObjPtr {
+        let ptr = ptr::slice_from_raw_parts_mut(ptr, len) as *mut str;
+        ObjPtr::new(self.allocate_string(ptr).cast())
+    }
+
+    fn allocate_string(&mut self, ptr: *mut str) -> *mut ObjString {
+        // Safety: OBJ_STRING allocates an ObjString
+        let string = unsafe { self.allocate_object(ObjKind::OBJ_STRING).as_string() };
+
+        // Safety: string is a valid ObjString
+        unsafe { (*string).ptr = ptr };
+
+        string
+    }
+
+    // TODO: Should this be generic?
+    fn allocate_object(&mut self, kind: ObjKind) -> ObjPtr {
+        let obj: *mut Obj = match kind {
+            ObjKind::OBJ_STRING => Box::into_raw(Box::<ObjString>::new_uninit()).cast(),
+        };
+
+        // Safety: types are compatible due to layout
+        unsafe {
+            obj.write(Obj {
+                kind,
+                next: self.objects,
+            })
+        };
+
+        let obj = ObjPtr::new(obj);
+        self.objects = obj;
+
+        obj
     }
 }
 

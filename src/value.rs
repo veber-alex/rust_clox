@@ -1,13 +1,11 @@
-use std::ptr::NonNull;
-
-use crate::object::{as_objstring_str, get_kind, Obj, ObjKind};
+use crate::object::{ObjKind, ObjPtr};
 
 #[derive(Clone, Copy)]
 pub enum Value {
     Nil,
     Number(f64),
     Boolean(bool),
-    Obj(NonNull<Obj>),
+    Obj(ObjPtr),
 }
 
 use ObjKind::*;
@@ -21,9 +19,9 @@ impl PartialEq for Value {
             (Boolean(l0), Boolean(r0)) => l0 == r0,
             (Nil, Nil) => true,
             // Safety: Obj is alive and valid
-            (Obj(l0), Obj(r0)) => match (get_kind(l0), get_kind(r0)) {
+            (Obj(l0), Obj(r0)) => match (l0.kind(), r0.kind()) {
                 // Safety: l0 and r0 are valid ObjString due to kind check
-                (OBJ_STRING, OBJ_STRING) => unsafe { as_objstring_str(r0) == as_objstring_str(l0) },
+                (OBJ_STRING, OBJ_STRING) => unsafe { l0.as_string_str() == r0.as_string_str() },
             },
             _ => false,
         }
@@ -38,10 +36,10 @@ impl std::fmt::Debug for Value {
             Number(number) => write!(f, "{number}"),
             Boolean(boolean) => write!(f, "{boolean}"),
             // Safety: Obj is alive and valid
-            Obj(obj) => match get_kind(obj) {
+            Obj(obj) => match obj.kind() {
                 OBJ_STRING => {
                     // Safety: obj is a valid ObjString due to kind check
-                    write!(f, "{}", unsafe { as_objstring_str(obj) })
+                    write!(f, "{}", unsafe { obj.as_string_str() })
                 }
             },
         }

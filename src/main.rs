@@ -13,6 +13,7 @@ mod scanner;
 
 mod chunk;
 mod compiler;
+mod memory;
 mod object;
 mod value;
 mod vm;
@@ -42,6 +43,8 @@ fn run_file(path: &str, mut vm: VM) {
         InterpretResult::RuntimeError => exit(70),
         InterpretResult::Ok => {}
     }
+
+    vm.free_vm();
 }
 
 #[cfg(not(miri))]
@@ -57,6 +60,8 @@ fn repl(mut vm: VM) {
             let _ = vm.interpret(&line);
         }
     }
+
+    vm.free_vm();
 }
 
 #[cfg(miri)]
@@ -81,4 +86,6 @@ fn repl(mut vm: VM) {
         }
         line.clear();
     }
+
+    vm.free_vm();
 }
