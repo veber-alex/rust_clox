@@ -14,6 +14,7 @@ mod chunk;
 mod compiler;
 mod memory;
 mod object;
+mod table;
 mod value;
 mod vm;
 

@@ -21,7 +21,7 @@ impl PartialEq for Value {
             // Safety: Obj is alive and valid
             (Obj(l0), Obj(r0)) => match (l0.kind(), r0.kind()) {
                 // Safety: l0 and r0 are valid ObjString due to kind check
-                (OBJ_STRING, OBJ_STRING) => unsafe { l0.as_string_str() == r0.as_string_str() },
+                (OBJ_STRING, OBJ_STRING) => unsafe { l0.as_string() == r0.as_string() },
             },
             _ => false,
         }

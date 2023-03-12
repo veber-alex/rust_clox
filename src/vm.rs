@@ -3,8 +3,9 @@ use std::ptr;
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::compile,
-    memory::{allocate_memory, free_objects},
-    object::{Obj, ObjKind, ObjPtr, ObjString},
+    memory::{allocate_memory, free_array_memory, free_objects},
+    object::{hash_string, Obj, ObjKind, ObjPtr, ObjString},
+    table::{free_table, table_find_string, table_set, Table},
     value::Value,
 };
 
@@ -26,6 +27,7 @@ pub struct VM {
     ip: *const u8,
     stack: Vec<Value>,
     stack_top: *mut Value,
+    strings: Table,
     pub objects: ObjPtr,
 }
 
@@ -36,6 +38,7 @@ impl VM {
             ip: ptr::null(),
             stack: Vec::with_capacity(STACK_MAX),
             stack_top: ptr::null_mut(),
+            strings: Table::new(),
             objects: ObjPtr::null(),
         };
         vm.reset_stack();
@@ -58,7 +61,8 @@ impl VM {
     }
 
     pub fn free_vm(&mut self) {
-        free_objects(self)
+        free_objects(self);
+        free_table(&mut self.strings);
     }
 
     fn set_chunk(&mut self, chunk: Chunk) {
@@ -217,24 +221,45 @@ impl VM {
 
     pub fn copy_string(&mut self, lexeme: &str) -> ObjPtr {
         let len = lexeme.len();
-        let ptr = allocate_memory::<u8>(len);
-        // Safety: dst is valid and non overlapping with src
-        unsafe { ptr::copy_nonoverlapping(lexeme.as_ptr(), ptr, len) }
+        let ptr = lexeme.as_ptr();
+        let hash = hash_string(ptr, len);
 
-        self.take_string(ptr, lexeme.len())
+        // Try to find the string in the intern table
+        let interned = table_find_string(&self.strings, ptr, len, hash);
+        if !interned.is_null() {
+            return ObjPtr::new(interned.cast());
+        }
+
+        let new_ptr = allocate_memory::<u8>(len);
+        // Safety: dst is valid and non overlapping with src
+        unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, len) }
+
+        ObjPtr::new(self.allocate_string(new_ptr, len, hash).cast())
     }
 
     fn take_string(&mut self, ptr: *mut u8, len: usize) -> ObjPtr {
-        let ptr = ptr::slice_from_raw_parts_mut(ptr, len) as *mut str;
-        ObjPtr::new(self.allocate_string(ptr).cast())
+        let hash = hash_string(ptr, len);
+        let interned = table_find_string(&self.strings, ptr, len, hash);
+        if !interned.is_null() {
+            free_array_memory(ptr, len);
+            return ObjPtr::new(interned.cast());
+        }
+
+        ObjPtr::new(self.allocate_string(ptr, len, hash).cast())
     }
 
-    fn allocate_string(&mut self, ptr: *mut str) -> *mut ObjString {
+    fn allocate_string(&mut self, ptr: *mut u8, len: usize, hash: u32) -> *mut ObjString {
         // Safety: OBJ_STRING allocates an ObjString
         let string = unsafe { self.allocate_object(ObjKind::OBJ_STRING).as_string() };
 
         // Safety: string is a valid ObjString
-        unsafe { (*string).ptr = ptr };
+        unsafe {
+            (*string).ptr = ptr;
+            (*string).len = len;
+            (*string).hash = hash
+        };
+
+        table_set(&mut self.strings, string, Value::Nil);
 
         string
     }

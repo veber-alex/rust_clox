@@ -34,7 +34,11 @@ impl ObjPtr {
     // Safety: Obj must be of type ObjString
     pub unsafe fn as_string_str<'a>(&self) -> &'a str {
         // Safety: Obj must be of type ObjString
-        unsafe { &*(*self.as_string()).ptr }
+        unsafe {
+            let ptr = (*self.as_string()).ptr;
+            let len = (*self.as_string()).len;
+            &*(ptr::slice_from_raw_parts(ptr, len) as *const str)
+        }
     }
 
     pub fn kind(&self) -> ObjKind {
@@ -59,5 +63,18 @@ pub struct Obj {
 #[repr(C)]
 pub struct ObjString {
     obj: Obj,
-    pub ptr: *mut str,
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub hash: u32,
+}
+
+pub fn hash_string(ptr: *const u8, len: usize) -> u32 {
+    let mut hash: u32 = 2166136261;
+    for i in 0..len {
+        // Safety: ptr and len point to a valid string
+        hash ^= unsafe { *ptr.add(i) as u32 };
+        hash = hash.wrapping_mul(16777619);
+    }
+
+    hash
 }
