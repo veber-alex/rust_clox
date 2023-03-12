@@ -8,6 +8,7 @@ pub enum OpCode {
     OP_NIL,
     OP_TRUE,
     OP_FALSE,
+    OP_POP,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -17,6 +18,7 @@ pub enum OpCode {
     OP_DIVIDE,
     OP_NOT,
     OP_NEGATE,
+    OP_PRINT,
     OP_RETURN,
 }
 
@@ -82,7 +84,7 @@ impl Chunk {
         match instruction {
             OP_CONSTANT => self.constant_instruction(instruction, offset),
             OP_RETURN | OP_NEGATE | OP_ADD | OP_SUBSTRACT | OP_MULTIPLY | OP_DIVIDE | OP_NIL
-            | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS => {
+            | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
                 self.simple_instruction(instruction, offset)
             }
         }

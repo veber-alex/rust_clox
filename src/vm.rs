@@ -106,7 +106,6 @@ impl VM {
                     self.push(constant);
                 }
                 OP_RETURN => {
-                    println!("{:?}", self.pop());
                     return InterpretResult::Ok;
                 }
                 OP_NEGATE => {
@@ -148,6 +147,10 @@ impl VM {
                 }
                 OP_GREATER => binary_op!(self, Value::Boolean, >),
                 OP_LESS => binary_op!(self, Value::Boolean, <),
+                OP_PRINT => println!("{:?}", self.pop()),
+                OP_POP => {
+                    self.pop();
+                }
             }
         }
     }

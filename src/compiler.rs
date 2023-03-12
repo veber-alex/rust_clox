@@ -10,8 +10,11 @@ pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
     let mut parser = Parser::new(vm, scanner, chunk);
 
     parser.advance();
-    parser.expression();
-    parser.consume(T![EOF], "Expect end of expression.");
+
+    while !parser.compare(T![EOF]) {
+        parser.declaration();
+    }
+
     parser.end_compiler();
 
     !parser.had_error
@@ -117,10 +120,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // FIXME: Can this take an opcode and not a byte?
+    fn compare(&mut self, kind: TokenKind) -> bool {
+        if self.check(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn check(&mut self, kind: TokenKind) -> bool {
+        self.current.kind == kind
+    }
+
     fn emit_opcode(&mut self, op_code: OpCode) {
-        let line = self.previous.line;
-        self.current_chunk().write_chunk(op_code as u8, line);
+        self.emit_byte(op_code as u8)
     }
 
     fn emit_byte(&mut self, byte: u8) {
@@ -169,6 +183,58 @@ impl<'a> Parser<'a> {
 
     fn expression(&mut self) {
         self.parse_precedence(Precedence::ASSIGNMENT)
+    }
+
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(T![;], "Expect ';' after expression.");
+        self.emit_opcode(OpCode::OP_POP);
+    }
+
+    fn print_statement(&mut self) {
+        self.expression();
+        self.consume(T![;], "Expect ';' after value.");
+        self.emit_opcode(OpCode::OP_PRINT)
+    }
+
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+
+        while self.current.kind != T![EOF] {
+            if self.previous.kind == T![;] {
+                return;
+            }
+
+            if let T![class]
+            | T![fun]
+            | T![var]
+            | T![for]
+            | T![if]
+            | T![while]
+            | T![print]
+            | T![return] = self.current.kind
+            {
+                return;
+            }
+
+            self.advance()
+        }
+    }
+
+    fn declaration(&mut self) {
+        self.statement();
+
+        if self.panic_mode {
+            self.synchronize();
+        }
+    }
+
+    fn statement(&mut self) {
+        if self.compare(T![print]) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
     }
 
     fn get_rule(&self, kind: TokenKind) -> ParseRule {
