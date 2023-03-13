@@ -9,6 +9,9 @@ pub enum OpCode {
     OP_TRUE,
     OP_FALSE,
     OP_POP,
+    OP_DEFINE_GLOBAL,
+    OP_SET_GLOBAL,
+    OP_GET_GLOBAL,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -82,7 +85,9 @@ impl Chunk {
         // Safety: byte is a valid opcode by compiler construction
         let instruction = unsafe { OpCode::from_u8_unchecked(byte) };
         match instruction {
-            OP_CONSTANT => self.constant_instruction(instruction, offset),
+            OP_CONSTANT | OP_DEFINE_GLOBAL | OP_GET_GLOBAL | OP_SET_GLOBAL => {
+                self.constant_instruction(instruction, offset)
+            }
             OP_RETURN | OP_NEGATE | OP_ADD | OP_SUBSTRACT | OP_MULTIPLY | OP_DIVIDE | OP_NIL
             | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
                 self.simple_instruction(instruction, offset)

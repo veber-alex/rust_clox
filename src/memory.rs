@@ -57,7 +57,6 @@ pub fn free_memory<T>(ptr: *mut T) {
 }
 
 pub fn free_array_memory<T>(ptr: *mut T, size: usize) {
-    // Safety: all raw pointers are created with allocate_memory
     if ptr.is_null() || size == 0 {
         return;
     }

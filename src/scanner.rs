@@ -81,7 +81,7 @@ impl<'a> Token<'a> {
         Self {
             kind: T![EOF],
             lexeme: "",
-            line: 0,
+            line: 1,
         }
     }
 }

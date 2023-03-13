@@ -64,12 +64,12 @@ pub fn table_set(table: *mut Table, key: *mut ObjString, value: Value) -> bool {
         let entry = find_entry(table, key);
         let is_new_key = (*entry).key.is_null();
 
-        (*entry).key = key;
-        (*entry).value = value;
-
         if is_new_key && (*entry).value == Value::Nil {
             (*table).count += 1;
         }
+
+        (*entry).key = key;
+        (*entry).value = value;
 
         is_new_key
     }

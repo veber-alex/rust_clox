@@ -1,11 +1,11 @@
-use std::ptr;
+use std::{hint::unreachable_unchecked, ptr};
 
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::compile,
     memory::{allocate_memory, free_array_memory, free_objects},
     object::{hash_string, Obj, ObjKind, ObjPtr, ObjString},
-    table::{free_table, table_find_string, table_set, Table},
+    table::{free_table, table_delete, table_find_string, table_get, table_set, Table},
     value::Value,
 };
 
@@ -28,6 +28,7 @@ pub struct VM {
     stack: Vec<Value>,
     stack_top: *mut Value,
     strings: Table,
+    globals: Table,
     pub objects: ObjPtr,
 }
 
@@ -39,6 +40,7 @@ impl VM {
             stack: Vec::with_capacity(STACK_MAX),
             stack_top: ptr::null_mut(),
             strings: Table::new(),
+            globals: Table::new(),
             objects: ObjPtr::null(),
         };
         vm.reset_stack();
@@ -63,6 +65,7 @@ impl VM {
     pub fn free_vm(&mut self) {
         free_objects(self);
         free_table(&mut self.strings);
+        free_table(&mut self.globals);
     }
 
     fn set_chunk(&mut self, chunk: Chunk) {
@@ -151,6 +154,30 @@ impl VM {
                 OP_POP => {
                     self.pop();
                 }
+                OP_DEFINE_GLOBAL => {
+                    let name = self.read_string();
+                    table_set(&mut self.globals, name, self.peek(0));
+                    self.pop();
+                }
+                OP_GET_GLOBAL => {
+                    let name = self.read_string();
+                    let mut value = Value::Nil;
+                    if !table_get(&mut self.globals, name, &mut value) {
+                        let string = unsafe { ObjPtr::new(name.cast()).as_string_str() };
+                        self.runtime_error(&format!("Undefined variable '{string}'."));
+                        return InterpretResult::RuntimeError;
+                    }
+                    self.push(value);
+                }
+                OP_SET_GLOBAL => {
+                    let name = self.read_string();
+                    if table_set(&mut self.globals, name, self.peek(0)) {
+                        table_delete(&mut self.globals, name);
+                        let string = unsafe { ObjPtr::new(name.cast()).as_string_str() };
+                        self.runtime_error(&format!("Undefined variable '{string}'."));
+                        return InterpretResult::RuntimeError;
+                    }
+                }
             }
         }
     }
@@ -177,6 +204,16 @@ impl VM {
 
         // Safety: constant exists at index by compiler bytecode construction
         unsafe { *self.chunk.constants.get_unchecked(byte as usize) }
+    }
+
+    // FIXME: like above this is unsafe
+    fn read_string(&mut self) -> *mut ObjString {
+        unsafe {
+            let Value::Obj(obj) = self.read_constant() else {
+                unreachable_unchecked()
+            };
+            obj.as_string()
+        }
     }
 
     fn push(&mut self, value: Value) {

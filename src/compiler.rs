@@ -11,7 +11,7 @@ pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
 
     parser.advance();
 
-    while !parser.compare(T![EOF]) {
+    while !parser.matches(T![EOF]) {
         parser.declaration();
     }
 
@@ -36,45 +36,13 @@ mod Precedence {
     pub const PRIMARY: u8 = 10;
 }
 
+type ParseFn = fn(&mut Parser<'_>, bool);
+
 #[derive(Clone, Copy)]
 pub struct ParseRule {
-    prefix: Option<fn(&mut Parser<'_>)>,
-    infix: Option<fn(&mut Parser<'_>)>,
+    prefix: Option<ParseFn>,
+    infix: Option<ParseFn>,
     precedence: u8,
-}
-
-impl ParseRule {
-    const fn none() -> Self {
-        Self {
-            prefix: None,
-            infix: None,
-            precedence: 0,
-        }
-    }
-
-    const fn prefix(prefix: fn(&mut Parser<'_>)) -> Self {
-        Self {
-            prefix: Some(prefix),
-            infix: None,
-            precedence: 0,
-        }
-    }
-
-    const fn infix(infix: fn(&mut Parser<'_>), precedence: u8) -> Self {
-        Self {
-            prefix: None,
-            infix: Some(infix),
-            precedence,
-        }
-    }
-
-    const fn both(prefix: fn(&mut Parser<'_>), infix: fn(&mut Parser<'_>), precedence: u8) -> Self {
-        Self {
-            prefix: Some(prefix),
-            infix: Some(infix),
-            precedence,
-        }
-    }
 }
 
 pub struct Parser<'a> {
@@ -120,7 +88,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn compare(&mut self, kind: TokenKind) -> bool {
+    fn matches(&mut self, kind: TokenKind) -> bool {
         if self.check(kind) {
             self.advance();
             true
@@ -185,6 +153,20 @@ impl<'a> Parser<'a> {
         self.parse_precedence(Precedence::ASSIGNMENT)
     }
 
+    fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expect variable name.");
+
+        if self.matches(T![=]) {
+            self.expression();
+        } else {
+            self.emit_opcode(OpCode::OP_NIL);
+        }
+
+        self.consume(T![;], "Expect ';' after variable declaration.");
+
+        self.define_variable(global);
+    }
+
     fn expression_statement(&mut self) {
         self.expression();
         self.consume(T![;], "Expect ';' after expression.");
@@ -222,7 +204,11 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) {
-        self.statement();
+        if self.matches(T![var]) {
+            self.var_declaration()
+        } else {
+            self.statement();
+        }
 
         if self.panic_mode {
             self.synchronize();
@@ -230,7 +216,7 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) {
-        if self.compare(T![print]) {
+        if self.matches(T![print]) {
             self.print_statement();
         } else {
             self.expression_statement();
@@ -251,14 +237,33 @@ impl<'a> Parser<'a> {
             return;
         };
 
-        prefix_rule(self);
+        let can_assign = precedence <= Precedence::ASSIGNMENT;
+        prefix_rule(self, can_assign);
 
         while precedence <= self.get_rule(self.current.kind).precedence {
             self.advance();
             // FIXME: How to remove this unwrap?
             let infix_rule = self.get_rule(self.previous.kind).infix.unwrap();
-            infix_rule(self);
+            infix_rule(self, can_assign);
         }
+
+        if can_assign && self.matches(T![=]) {
+            self.error("Invalid assignment target.");
+        }
+    }
+
+    fn identifier_constant(&mut self, token: Token<'_>) -> u8 {
+        let string = self.vm.copy_string(token.lexeme);
+        self.make_constant(Value::Obj(string))
+    }
+
+    fn parse_variable(&mut self, msg: &str) -> u8 {
+        self.consume(T![ident], msg);
+        self.identifier_constant(self.previous)
+    }
+
+    fn define_variable(&mut self, global: u8) {
+        self.emit_bytes(OpCode::OP_DEFINE_GLOBAL as u8, global)
     }
 }
 
@@ -291,48 +296,83 @@ impl<'a> Parser<'a> {
 }
 
 mod jump_table {
-    use std::mem;
-
     use crate::{
         chunk::OpCode,
         compiler::{ParseRule, Parser, Precedence},
-        scanner::TokenKind,
+        scanner::{Token, TokenKind},
         value::Value,
     };
+    use std::mem;
+    use Precedence::*;
+
+    #[rustfmt::skip]
+    macro_rules! rules_inner {
+        ($rules:expr; $kind:expr => [None, $infix:tt, $precedence:tt]) => {
+            $rules[$kind as usize] = ParseRule { prefix: None, infix: Some($infix), precedence: $precedence };
+        };
+        ($rules:expr; $kind:expr => [$prefix:tt, None, $precedence:tt]) => {
+            $rules[$kind as usize] = ParseRule { prefix: Some($prefix), infix: None, precedence: $precedence };
+        };
+        ($rules:expr; $kind:expr => [$prefix:tt, $infix:tt, $precedence:tt]) => {
+            $rules[$kind as usize] = ParseRule { prefix: Some($prefix), infix: Some($infix), precedence: $precedence};
+        };
+    }
+
+    macro_rules! rules {
+        ($([$kind:expr, $prefix:tt, $infix:tt, $precedence:tt])*) => {{
+            let mut rules = [ParseRule {prefix: None, infix: None, precedence: NONE}; mem::variant_count::<TokenKind>()];
+            $(
+                rules_inner!(rules; $kind => [$prefix, $infix, $precedence]);
+            )*
+
+            rules
+        }};
+    }
 
     // FIXME: Replace this dumb thing with a simple match (check asm)
-    pub static RULES: [ParseRule; mem::variant_count::<TokenKind>()] = {
-        use Precedence::*;
-        let mut rules = [ParseRule::none(); mem::variant_count::<TokenKind>()];
-
-        rules[T![-] as usize] = ParseRule::both(unary, binary, TERM);
-        rules[T!['('] as usize] = ParseRule::prefix(grouping);
-        rules[T![number] as usize] = ParseRule::prefix(number);
-        rules[T![false] as usize] = ParseRule::prefix(literal);
-        rules[T![true] as usize] = ParseRule::prefix(literal);
-        rules[T![nil] as usize] = ParseRule::prefix(literal);
-        rules[T![str] as usize] = ParseRule::prefix(string);
-        rules[T![!] as usize] = ParseRule::prefix(unary);
-        rules[T![+] as usize] = ParseRule::infix(binary, TERM);
-        rules[T![/] as usize] = ParseRule::infix(binary, FACTOR);
-        rules[T![*] as usize] = ParseRule::infix(binary, FACTOR);
-        rules[T![!=] as usize] = ParseRule::infix(binary, EQUALITY);
-        rules[T![==] as usize] = ParseRule::infix(binary, EQUALITY);
-        rules[T![>] as usize] = ParseRule::infix(binary, COMPARISON);
-        rules[T![>=] as usize] = ParseRule::infix(binary, COMPARISON);
-        rules[T![<] as usize] = ParseRule::infix(binary, COMPARISON);
-        rules[T![<=] as usize] = ParseRule::infix(binary, COMPARISON);
-
-        rules
+    pub static RULES: [ParseRule; mem::variant_count::<TokenKind>()] = rules! {
+        [T![-],      unary,    binary, TERM]
+        [T!['('],    grouping, None,   NONE]
+        [T![number], number,   None,   NONE]
+        [T![false],  literal,  None,   NONE]
+        [T![true],   literal,  None,   NONE]
+        [T![nil],    literal,  None,   NONE]
+        [T![str],    string,   None,   NONE]
+        [T![!],      unary,    None,   NONE]
+        [T![ident],  variable, None,   NONE]
+        [T![+],      None,     binary, TERM]
+        [T![/],      None,     binary, FACTOR]
+        [T![*],      None,     binary, FACTOR]
+        [T![!=],     None,     binary, EQUALITY]
+        [T![==],     None,     binary, EQUALITY]
+        [T![>],      None,     binary, COMPARISON]
+        [T![>=],     None,     binary, COMPARISON]
+        [T![<],      None,     binary, COMPARISON]
+        [T![<=],     None,     binary, COMPARISON]
     };
 
-    fn string(parser: &mut Parser<'_>) {
+    fn string(parser: &mut Parser<'_>, _: bool) {
         let lexeme = parser.previous.lexeme;
         let obj = parser.vm.copy_string(&lexeme[1..][..lexeme.len() - 2]);
         parser.emit_constant(Value::Obj(obj))
     }
 
-    fn literal(parser: &mut Parser<'_>) {
+    fn named_variable(parser: &mut Parser<'_>, token: Token<'_>, can_assign: bool) {
+        let arg = parser.identifier_constant(token);
+
+        if can_assign && parser.matches(T![=]) {
+            parser.expression();
+            parser.emit_bytes(OpCode::OP_SET_GLOBAL as u8, arg);
+        } else {
+            parser.emit_bytes(OpCode::OP_GET_GLOBAL as u8, arg);
+        }
+    }
+
+    fn variable(parser: &mut Parser<'_>, can_assign: bool) {
+        named_variable(parser, parser.previous, can_assign)
+    }
+
+    fn literal(parser: &mut Parser<'_>, _: bool) {
         match parser.previous.kind {
             T![false] => parser.emit_opcode(OpCode::OP_FALSE),
             T![true] => parser.emit_opcode(OpCode::OP_TRUE),
@@ -341,17 +381,17 @@ mod jump_table {
         }
     }
 
-    fn number(parser: &mut Parser<'_>) {
+    fn number(parser: &mut Parser<'_>, _: bool) {
         let value: f64 = parser.previous.lexeme.parse().unwrap();
         parser.emit_constant(Value::Number(value));
     }
 
-    fn grouping(parser: &mut Parser<'_>) {
+    fn grouping(parser: &mut Parser<'_>, _: bool) {
         parser.expression();
         parser.consume(T![')'], "Expect ')' after expression.")
     }
 
-    fn unary(parser: &mut Parser<'_>) {
+    fn unary(parser: &mut Parser<'_>, _: bool) {
         let operator = parser.previous.kind;
 
         // Compile the operand.
@@ -365,7 +405,7 @@ mod jump_table {
         }
     }
 
-    fn binary(parser: &mut Parser<'_>) {
+    fn binary(parser: &mut Parser<'_>, _: bool) {
         let operator = parser.previous.kind;
         let rule = parser.get_rule(operator);
         parser.parse_precedence(rule.precedence + 1);
