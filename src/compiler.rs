@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
     fn end_compiler(&mut self) {
         self.emit_return();
 
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "debug_prints")]
         {
             if !self.had_error {
                 self.current_chunk().disassemble_chunk("code");

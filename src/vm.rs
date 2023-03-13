@@ -81,7 +81,7 @@ impl VM {
         use OpCode::*;
 
         loop {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug_prints")]
             {
                 print!("          ");
                 let mut slot = self.stack.as_ptr();

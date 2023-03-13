@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 rustyline = { version = "11.0.0", default-features = false }
+
+[features]
+debug_prints = []
