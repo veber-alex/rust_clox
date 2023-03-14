@@ -7,6 +7,9 @@ use crate::{
     vm::VM,
 };
 
+use OpCode::*;
+use Precedence::*;
+
 pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
     let scanner = Scanner::new(source);
     let mut compiler = Compiler::new();
@@ -26,17 +29,17 @@ pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
 // FIXME: try to make this a real
 #[allow(non_snake_case)]
 mod Precedence {
-    pub const NONE: u8 = 0;
-    pub const ASSIGNMENT: u8 = 1; // =
-    pub const OR: u8 = 2; // or
-    pub const AND: u8 = 3; // and
-    pub const EQUALITY: u8 = 4; // == !=
-    pub const COMPARISON: u8 = 5; // < > <= >=
-    pub const TERM: u8 = 6; // + -
-    pub const FACTOR: u8 = 7; // * /
-    pub const UNARY: u8 = 8; // ! -
-    pub const CALL: u8 = 9; // . ()
-    pub const PRIMARY: u8 = 10;
+    pub const PREC_NONE: u8 = 0;
+    pub const PREC_ASSIGNMENT: u8 = 1; // =
+    pub const PREC_OR: u8 = 2; // or
+    pub const PREC_AND: u8 = 3; // and
+    pub const PREC_EQUALITY: u8 = 4; // == !=
+    pub const PREC_COMPARISON: u8 = 5; // < > <= >=
+    pub const PREC_TERM: u8 = 6; // + -
+    pub const PREC_FACTOR: u8 = 7; // * /
+    pub const PREC_UNARY: u8 = 8; // ! -
+    pub const PREC_CALL: u8 = 9; // . ()
+    pub const PREC_PRIMARY: u8 = 10;
 }
 
 type ParseFn = fn(&mut Parser<'_>, bool);
@@ -173,7 +176,7 @@ impl<'a> Parser<'a> {
 
     fn emit_constant(&mut self, value: Value) {
         let index = self.make_constant(value);
-        self.emit_bytes(OpCode::OP_CONSTANT as u8, index);
+        self.emit_bytes(OP_CONSTANT as u8, index);
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
@@ -198,7 +201,7 @@ impl<'a> Parser<'a> {
     }
 
     fn emit_return(&mut self) {
-        self.emit_opcode(OpCode::OP_RETURN)
+        self.emit_opcode(OP_RETURN)
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -206,7 +209,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) {
-        self.parse_precedence(Precedence::ASSIGNMENT)
+        self.parse_precedence(PREC_ASSIGNMENT)
     }
 
     fn block(&mut self) {
@@ -223,7 +226,7 @@ impl<'a> Parser<'a> {
         if self.matches(T![=]) {
             self.expression();
         } else {
-            self.emit_opcode(OpCode::OP_NIL);
+            self.emit_opcode(OP_NIL);
         }
 
         self.consume(T![;], "Expect ';' after variable declaration.");
@@ -234,7 +237,7 @@ impl<'a> Parser<'a> {
     fn expression_statement(&mut self) {
         self.expression();
         self.consume(T![;], "Expect ';' after expression.");
-        self.emit_opcode(OpCode::OP_POP);
+        self.emit_opcode(OP_POP);
     }
 
     fn if_statement(&mut self) {
@@ -242,13 +245,13 @@ impl<'a> Parser<'a> {
         self.expression();
         self.consume(T![')'], "Expect ')' after condition.");
 
-        let then_jump = self.emit_jump(OpCode::OP_JUMP_IF_FALSE);
-        self.emit_opcode(OpCode::OP_POP);
+        let then_jump = self.emit_jump(OP_JUMP_IF_FALSE);
+        self.emit_opcode(OP_POP);
         self.statement();
-        let else_jump = self.emit_jump(OpCode::OP_JUMP);
+        let else_jump = self.emit_jump(OP_JUMP);
 
         self.patch_jump(then_jump);
-        self.emit_opcode(OpCode::OP_POP);
+        self.emit_opcode(OP_POP);
 
         if self.matches(T![else]) {
             self.statement()
@@ -259,7 +262,7 @@ impl<'a> Parser<'a> {
     fn print_statement(&mut self) {
         self.expression();
         self.consume(T![;], "Expect ';' after value.");
-        self.emit_opcode(OpCode::OP_PRINT)
+        self.emit_opcode(OP_PRINT)
     }
 
     fn synchronize(&mut self) {
@@ -326,7 +329,7 @@ impl<'a> Parser<'a> {
             return;
         };
 
-        let can_assign = precedence <= Precedence::ASSIGNMENT;
+        let can_assign = precedence <= PREC_ASSIGNMENT;
         prefix_rule(self, can_assign);
 
         while precedence <= self.get_rule(self.current.kind).precedence {
@@ -356,8 +359,8 @@ impl<'a> Parser<'a> {
         while self.compiler.local_count > 0
             && self.compiler.locals[self.compiler.local_count - 1].depth > self.compiler.scope_depth
         {
-            // FIXME: Add a special OpCode::POP_POPN to pop multiple values from the stack at once
-            self.emit_opcode(OpCode::OP_POP);
+            // FIXME: Add a special POP_POPN to pop multiple values from the stack at once
+            self.emit_opcode(OP_POP);
             self.compiler.local_count -= 1;
         }
     }
@@ -418,16 +421,16 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        self.emit_bytes(OpCode::OP_DEFINE_GLOBAL as u8, global)
+        self.emit_bytes(OP_DEFINE_GLOBAL as u8, global)
     }
 
     fn named_variable(&mut self, token: Token<'_>, can_assign: bool) {
         let mut arg = resolve_local(&self.compiler, self, token);
         let (get_op, set_op) = if arg != -1 {
-            (OpCode::OP_GET_LOCAL, OpCode::OP_SET_LOCAL)
+            (OP_GET_LOCAL, OP_SET_LOCAL)
         } else {
             arg = self.identifier_constant(token) as i32;
-            (OpCode::OP_GET_GLOBAL, OpCode::OP_SET_GLOBAL)
+            (OP_GET_GLOBAL, OP_SET_GLOBAL)
         };
 
         if can_assign && self.matches(T![=]) {
@@ -492,6 +495,8 @@ mod jump_table {
         value::Value,
     };
     use std::mem;
+
+    use OpCode::*;
     use Precedence::*;
 
     #[rustfmt::skip]
@@ -509,7 +514,7 @@ mod jump_table {
 
     macro_rules! rules {
         ($([$kind:expr, $prefix:tt, $infix:tt, $precedence:tt])*) => {{
-            let mut rules = [ParseRule {prefix: None, infix: None, precedence: NONE}; mem::variant_count::<TokenKind>()];
+            let mut rules = [ParseRule {prefix: None, infix: None, precedence: PREC_NONE}; mem::variant_count::<TokenKind>()];
             $(
                 rules_inner!(rules; $kind => [$prefix, $infix, $precedence]);
             )*
@@ -520,25 +525,47 @@ mod jump_table {
 
     // FIXME: Replace this dumb thing with a simple match (check asm)
     pub static RULES: [ParseRule; mem::variant_count::<TokenKind>()] = rules! {
-        [T![-],      unary,    binary, TERM]
-        [T!['('],    grouping, None,   NONE]
-        [T![number], number,   None,   NONE]
-        [T![false],  literal,  None,   NONE]
-        [T![true],   literal,  None,   NONE]
-        [T![nil],    literal,  None,   NONE]
-        [T![str],    string,   None,   NONE]
-        [T![!],      unary,    None,   NONE]
-        [T![ident],  variable, None,   NONE]
-        [T![+],      None,     binary, TERM]
-        [T![/],      None,     binary, FACTOR]
-        [T![*],      None,     binary, FACTOR]
-        [T![!=],     None,     binary, EQUALITY]
-        [T![==],     None,     binary, EQUALITY]
-        [T![>],      None,     binary, COMPARISON]
-        [T![>=],     None,     binary, COMPARISON]
-        [T![<],      None,     binary, COMPARISON]
-        [T![<=],     None,     binary, COMPARISON]
+        [T![-],       unary,      binary,   PREC_TERM]
+        [T!['('],     grouping,   None,     PREC_NONE]
+        [T![number],  number,     None,     PREC_NONE]
+        [T![false],   literal,    None,     PREC_NONE]
+        [T![true],    literal,    None,     PREC_NONE]
+        [T![nil],     literal,    None,     PREC_NONE]
+        [T![str],     string,     None,     PREC_NONE]
+        [T![!],       unary,      None,     PREC_NONE]
+        [T![ident],   variable,   None,     PREC_NONE]
+        [T![+],       None,       binary,   PREC_TERM]
+        [T![/],       None,       binary,   PREC_FACTOR]
+        [T![*],       None,       binary,   PREC_FACTOR]
+        [T![!=],      None,       binary,   PREC_EQUALITY]
+        [T![==],      None,       binary,   PREC_EQUALITY]
+        [T![>],       None,       binary,   PREC_COMPARISON]
+        [T![>=],      None,       binary,   PREC_COMPARISON]
+        [T![<],       None,       binary,   PREC_COMPARISON]
+        [T![<=],      None,       binary,   PREC_COMPARISON]
+        [T![and],     None,       and,      PREC_AND]
+        [T![or],      None,       or,       PREC_OR]
     };
+
+    fn and(parser: &mut Parser<'_>, _: bool) {
+        let end_jump = parser.emit_jump(OP_JUMP_IF_FALSE);
+
+        parser.emit_opcode(OP_POP);
+        parser.parse_precedence(PREC_AND);
+
+        parser.patch_jump(end_jump);
+    }
+
+    fn or(parser: &mut Parser<'_>, _: bool) {
+        let else_jump = parser.emit_jump(OP_JUMP_IF_FALSE);
+        let end_jump = parser.emit_jump(OP_JUMP);
+
+        parser.patch_jump(else_jump);
+        parser.emit_opcode(OP_POP);
+
+        parser.parse_precedence(PREC_OR);
+        parser.patch_jump(end_jump);
+    }
 
     fn string(parser: &mut Parser<'_>, _: bool) {
         let lexeme = parser.previous.lexeme;
@@ -552,9 +579,9 @@ mod jump_table {
 
     fn literal(parser: &mut Parser<'_>, _: bool) {
         match parser.previous.kind {
-            T![false] => parser.emit_opcode(OpCode::OP_FALSE),
-            T![true] => parser.emit_opcode(OpCode::OP_TRUE),
-            T![nil] => parser.emit_opcode(OpCode::OP_NIL),
+            T![false] => parser.emit_opcode(OP_FALSE),
+            T![true] => parser.emit_opcode(OP_TRUE),
+            T![nil] => parser.emit_opcode(OP_NIL),
             _ => {}
         }
     }
@@ -573,12 +600,12 @@ mod jump_table {
         let operator = parser.previous.kind;
 
         // Compile the operand.
-        parser.parse_precedence(Precedence::UNARY);
+        parser.parse_precedence(PREC_UNARY);
 
         // Emit the operator instruction.
         match operator {
-            T![-] => parser.emit_opcode(OpCode::OP_NEGATE),
-            T![!] => parser.emit_opcode(OpCode::OP_NOT),
+            T![-] => parser.emit_opcode(OP_NEGATE),
+            T![!] => parser.emit_opcode(OP_NOT),
             _ => {}
         }
     }
@@ -589,16 +616,16 @@ mod jump_table {
         parser.parse_precedence(rule.precedence + 1);
 
         match operator {
-            T![!=] => parser.emit_bytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8),
-            T![==] => parser.emit_opcode(OpCode::OP_EQUAL),
-            T![>] => parser.emit_opcode(OpCode::OP_GREATER),
-            T![>=] => parser.emit_bytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8),
-            T![<] => parser.emit_opcode(OpCode::OP_LESS),
-            T![<=] => parser.emit_bytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8),
-            T![+] => parser.emit_opcode(OpCode::OP_ADD),
-            T![-] => parser.emit_opcode(OpCode::OP_SUBSTRACT),
-            T![*] => parser.emit_opcode(OpCode::OP_MULTIPLY),
-            T![/] => parser.emit_opcode(OpCode::OP_DIVIDE),
+            T![!=] => parser.emit_bytes(OP_EQUAL as u8, OP_NOT as u8),
+            T![==] => parser.emit_opcode(OP_EQUAL),
+            T![>] => parser.emit_opcode(OP_GREATER),
+            T![>=] => parser.emit_bytes(OP_LESS as u8, OP_NOT as u8),
+            T![<] => parser.emit_opcode(OP_LESS),
+            T![<=] => parser.emit_bytes(OP_GREATER as u8, OP_NOT as u8),
+            T![+] => parser.emit_opcode(OP_ADD),
+            T![-] => parser.emit_opcode(OP_SUBSTRACT),
+            T![*] => parser.emit_opcode(OP_MULTIPLY),
+            T![/] => parser.emit_opcode(OP_DIVIDE),
             _ => {}
         }
     }
