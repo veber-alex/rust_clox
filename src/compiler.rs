@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use crate::{
     chunk::{Chunk, OpCode},
     scanner::{Scanner, Token, TokenKind},
@@ -7,7 +9,8 @@ use crate::{
 
 pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
     let scanner = Scanner::new(source);
-    let mut parser = Parser::new(vm, scanner, chunk);
+    let mut compiler = Compiler::new();
+    let mut parser = Parser::new(vm, scanner, chunk, &mut compiler);
 
     parser.advance();
 
@@ -17,7 +20,7 @@ pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
 
     parser.end_compiler();
 
-    !parser.had_error
+    !parser.had_error.get()
 }
 
 // FIXME: try to make this a real
@@ -37,6 +40,7 @@ mod Precedence {
 }
 
 type ParseFn = fn(&mut Parser<'_>, bool);
+const U8_COUNT: usize = u8::MAX as usize + 1;
 
 #[derive(Clone, Copy)]
 pub struct ParseRule {
@@ -45,26 +49,58 @@ pub struct ParseRule {
     precedence: u8,
 }
 
+#[derive(Clone, Copy)]
+struct Local<'a> {
+    name: Token<'a>,
+    depth: i32,
+}
+
+struct Compiler<'a> {
+    locals: [Local<'a>; U8_COUNT],
+    local_count: usize,
+    scope_depth: i32,
+}
+
+impl<'a> Compiler<'a> {
+    fn new() -> Self {
+        Compiler {
+            locals: [Local {
+                name: Token::dummy(),
+                depth: 0,
+            }; U8_COUNT],
+            local_count: 0,
+            scope_depth: 0,
+        }
+    }
+}
+
 pub struct Parser<'a> {
     scanner: Scanner<'a>,
     current: Token<'a>,
     previous: Token<'a>,
-    had_error: bool,
-    panic_mode: bool,
+    had_error: Cell<bool>,
+    panic_mode: Cell<bool>,
     chunk: &'a mut Chunk,
     vm: &'a mut VM,
+    compiler: &'a mut Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(vm: &'a mut VM, scanner: Scanner<'a>, chunk: &'a mut Chunk) -> Self {
+    fn new(
+        vm: &'a mut VM,
+        scanner: Scanner<'a>,
+        chunk: &'a mut Chunk,
+        compiler: &'a mut Compiler<'a>,
+    ) -> Self {
         Self {
             scanner,
             current: Token::dummy(),
             previous: Token::dummy(),
-            had_error: false,
-            panic_mode: false,
+            had_error: Cell::new(false),
+            panic_mode: Cell::new(false),
             chunk,
             vm,
+            compiler,
         }
     }
 
@@ -135,7 +171,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(feature = "debug_prints")]
         {
-            if !self.had_error {
+            if !self.had_error.get() {
                 self.current_chunk().disassemble_chunk("code");
             }
         }
@@ -151,6 +187,14 @@ impl<'a> Parser<'a> {
 
     fn expression(&mut self) {
         self.parse_precedence(Precedence::ASSIGNMENT)
+    }
+
+    fn block(&mut self) {
+        while !self.check(T!['}']) && !self.check(T![EOF]) {
+            self.declaration()
+        }
+
+        self.consume(T!['}'], "Expect '}' after block.")
     }
 
     fn var_declaration(&mut self) {
@@ -180,7 +224,7 @@ impl<'a> Parser<'a> {
     }
 
     fn synchronize(&mut self) {
-        self.panic_mode = false;
+        self.panic_mode.set(false);
 
         while self.current.kind != T![EOF] {
             if self.previous.kind == T![;] {
@@ -210,7 +254,7 @@ impl<'a> Parser<'a> {
             self.statement();
         }
 
-        if self.panic_mode {
+        if self.panic_mode.get() {
             self.synchronize();
         }
     }
@@ -218,6 +262,10 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.matches(T![print]) {
             self.print_statement();
+        } else if self.matches(T!['{']) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
         } else {
             self.expression_statement();
         }
@@ -257,31 +305,131 @@ impl<'a> Parser<'a> {
         self.make_constant(Value::Obj(string))
     }
 
+    fn begin_scope(&mut self) {
+        self.compiler.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.compiler.scope_depth -= 1;
+
+        while self.compiler.local_count > 0
+            && self.compiler.locals[self.compiler.local_count - 1].depth > self.compiler.scope_depth
+        {
+            // FIXME: Add a special OpCode::POP_POPN to pop multiple values from the stack at once
+            self.emit_opcode(OpCode::OP_POP);
+            self.compiler.local_count -= 1;
+        }
+    }
+
+    fn add_local(&mut self, name: Token<'a>) {
+        let Some(local) = self.compiler.locals.get_mut(self.compiler.local_count) else {
+            self.error("Too many local variables in function.");
+            return
+        };
+
+        *local = Local { name, depth: -1 };
+
+        self.compiler.local_count += 1;
+    }
+
+    fn declare_variable(&mut self) {
+        if self.compiler.scope_depth == 0 {
+            return;
+        }
+
+        let name = self.previous;
+        for local in self.compiler.locals[..self.compiler.local_count]
+            .iter()
+            .rev()
+        {
+            if local.depth != -1 && local.depth < self.compiler.scope_depth {
+                break;
+            }
+
+            if name.lexeme == local.name.lexeme {
+                self.error("Already a variable with this name in this scope.");
+                // FIXME: This break should not be here, it's a workaround borrow checker errors
+                break;
+            }
+        }
+
+        self.add_local(name);
+    }
+
     fn parse_variable(&mut self, msg: &str) -> u8 {
         self.consume(T![ident], msg);
+
+        self.declare_variable();
+        if self.compiler.scope_depth > 0 {
+            return 0;
+        }
+
         self.identifier_constant(self.previous)
     }
 
+    fn mark_initialized(&mut self) {
+        self.compiler.locals[self.compiler.local_count - 1].depth = self.compiler.scope_depth;
+    }
+
     fn define_variable(&mut self, global: u8) {
+        if self.compiler.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
+
         self.emit_bytes(OpCode::OP_DEFINE_GLOBAL as u8, global)
+    }
+
+    fn named_variable(&mut self, token: Token<'_>, can_assign: bool) {
+        let mut arg = resolve_local(&self.compiler, self, token);
+        let (get_op, set_op) = if arg != -1 {
+            (OpCode::OP_GET_LOCAL, OpCode::OP_SET_LOCAL)
+        } else {
+            arg = self.identifier_constant(token) as i32;
+            (OpCode::OP_GET_GLOBAL, OpCode::OP_SET_GLOBAL)
+        };
+
+        if can_assign && self.matches(T![=]) {
+            self.expression();
+            self.emit_bytes(set_op as u8, arg as u8);
+        } else {
+            self.emit_bytes(get_op as u8, arg as u8);
+        }
+    }
+}
+
+// FIXME: This should return Option<u8>
+fn resolve_local(compiler: &Compiler<'_>, parser: &Parser<'_>, name: Token<'_>) -> i32 {
+    match compiler.locals[..compiler.local_count]
+        .iter()
+        .zip(0..compiler.local_count as i32)
+        .rev()
+        .find(|(local, _)| name.lexeme == local.name.lexeme)
+    {
+        Some((Local { depth: -1, .. }, i)) => {
+            parser.error("Can't read local variable in its own initializer.");
+            i
+        }
+        Some((_, i)) => i,
+        None => -1,
     }
 }
 
 // error handling
 impl<'a> Parser<'a> {
-    fn error_at_current(&mut self, msg: &str) {
+    fn error_at_current(&self, msg: &str) {
         self.error_at(self.current, msg)
     }
 
-    fn error(&mut self, msg: &str) {
+    fn error(&self, msg: &str) {
         self.error_at(self.previous, msg)
     }
 
-    fn error_at(&mut self, token: Token<'a>, msg: &str) {
-        if self.panic_mode {
+    fn error_at(&self, token: Token<'a>, msg: &str) {
+        if self.panic_mode.get() {
             return;
         }
-        self.panic_mode = true;
+        self.panic_mode.set(true);
         eprint!("[line {}] Error", token.line);
 
         match token.kind {
@@ -291,7 +439,7 @@ impl<'a> Parser<'a> {
         }
 
         eprintln!(": {msg}");
-        self.had_error = true;
+        self.had_error.set(true);
     }
 }
 
@@ -299,7 +447,7 @@ mod jump_table {
     use crate::{
         chunk::OpCode,
         compiler::{ParseRule, Parser, Precedence},
-        scanner::{Token, TokenKind},
+        scanner::TokenKind,
         value::Value,
     };
     use std::mem;
@@ -357,19 +505,8 @@ mod jump_table {
         parser.emit_constant(Value::Obj(obj))
     }
 
-    fn named_variable(parser: &mut Parser<'_>, token: Token<'_>, can_assign: bool) {
-        let arg = parser.identifier_constant(token);
-
-        if can_assign && parser.matches(T![=]) {
-            parser.expression();
-            parser.emit_bytes(OpCode::OP_SET_GLOBAL as u8, arg);
-        } else {
-            parser.emit_bytes(OpCode::OP_GET_GLOBAL as u8, arg);
-        }
-    }
-
     fn variable(parser: &mut Parser<'_>, can_assign: bool) {
-        named_variable(parser, parser.previous, can_assign)
+        parser.named_variable(parser.previous, can_assign)
     }
 
     fn literal(parser: &mut Parser<'_>, _: bool) {

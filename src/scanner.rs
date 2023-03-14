@@ -81,7 +81,7 @@ impl<'a> Token<'a> {
         Self {
             kind: T![EOF],
             lexeme: "",
-            line: 1,
+            line: 0,
         }
     }
 }
@@ -99,7 +99,7 @@ impl<'a> Scanner<'a> {
             source,
             start: 0,
             chars: source.char_indices(),
-            line: 0,
+            line: 1,
         }
     }
 

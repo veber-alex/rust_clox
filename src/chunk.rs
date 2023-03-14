@@ -9,6 +9,8 @@ pub enum OpCode {
     OP_TRUE,
     OP_FALSE,
     OP_POP,
+    OP_GET_LOCAL,
+    OP_SET_LOCAL,
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
     OP_GET_GLOBAL,
@@ -92,6 +94,7 @@ impl Chunk {
             | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
                 self.simple_instruction(instruction, offset)
             }
+            OP_GET_LOCAL | OP_SET_LOCAL => self.byte_instruction(instruction, offset),
         }
     }
 
@@ -104,6 +107,12 @@ impl Chunk {
         let constant_index = self.code[offset + 1];
         print!("{op_code:16?} {constant_index:4} ");
         println!("'{:?}'", self.constants[constant_index as usize]);
+        offset + 2
+    }
+
+    fn byte_instruction(&self, op_code: OpCode, offset: usize) -> usize {
+        let slot = self.code[offset + 1];
+        print!("{op_code:16?} {slot:4} ");
         offset + 2
     }
 }

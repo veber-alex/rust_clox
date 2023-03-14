@@ -25,7 +25,7 @@ const STACK_MAX: usize = 256;
 pub struct VM {
     chunk: Chunk,
     ip: *const u8,
-    stack: Vec<Value>,
+    stack: *mut Value,
     stack_top: *mut Value,
     strings: Table,
     globals: Table,
@@ -37,7 +37,7 @@ impl VM {
         let mut vm = Self {
             chunk: Chunk::new(),
             ip: ptr::null(),
-            stack: Vec::with_capacity(STACK_MAX),
+            stack: ptr::null_mut(),
             stack_top: ptr::null_mut(),
             strings: Table::new(),
             globals: Table::new(),
@@ -66,6 +66,7 @@ impl VM {
         free_objects(self);
         free_table(&mut self.strings);
         free_table(&mut self.globals);
+        free_array_memory(self.stack, STACK_MAX);
     }
 
     fn set_chunk(&mut self, chunk: Chunk) {
@@ -74,7 +75,8 @@ impl VM {
     }
 
     fn reset_stack(&mut self) {
-        self.stack_top = self.stack.as_mut_ptr();
+        self.stack = allocate_memory(STACK_MAX);
+        self.stack_top = self.stack;
     }
 
     // Safety: set_chunk() must be called before run()
@@ -87,7 +89,7 @@ impl VM {
             #[cfg(feature = "debug_prints")]
             {
                 print!("          ");
-                let mut slot = self.stack.as_ptr();
+                let mut slot = self.stack;
                 while slot < self.stack_top {
                     // Safety: slot is in valid range
                     unsafe { print!("[ {:?} ]", *slot) };
@@ -177,6 +179,15 @@ impl VM {
                         self.runtime_error(&format!("Undefined variable '{string}'."));
                         return InterpretResult::RuntimeError;
                     }
+                }
+                OP_GET_LOCAL => {
+                    let slot = self.read_byte() as usize;
+                    let local = unsafe { *self.stack.add(slot) };
+                    self.push(local);
+                }
+                OP_SET_LOCAL => {
+                    let slot = self.read_byte() as usize;
+                    unsafe { *self.stack.add(slot) = self.peek(0) };
                 }
             }
         }
