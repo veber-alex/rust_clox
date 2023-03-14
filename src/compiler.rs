@@ -146,9 +146,29 @@ impl<'a> Parser<'a> {
         self.current_chunk().write_chunk(byte, line);
     }
 
+    // TODO: Replace this with emit_opcode_2
     fn emit_bytes(&mut self, byte1: u8, byte2: u8) {
         self.emit_byte(byte1);
         self.emit_byte(byte2);
+    }
+
+    fn emit_jump(&mut self, op_code: OpCode) -> usize {
+        self.emit_byte(op_code as u8);
+        self.emit_byte(0xff);
+        self.emit_byte(0xff);
+
+        self.current_chunk().code.len() - 2
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        let jump = self.current_chunk().code.len() - offset - 2;
+
+        if jump > u16::MAX as usize {
+            self.error("Too much code to jump over.");
+        }
+
+        self.current_chunk().code[offset] = ((jump >> 8) & 0xff) as u8;
+        self.current_chunk().code[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn emit_constant(&mut self, value: Value) {
@@ -217,6 +237,25 @@ impl<'a> Parser<'a> {
         self.emit_opcode(OpCode::OP_POP);
     }
 
+    fn if_statement(&mut self) {
+        self.consume(T!['('], "Expect '(' after 'if'.");
+        self.expression();
+        self.consume(T![')'], "Expect ')' after condition.");
+
+        let then_jump = self.emit_jump(OpCode::OP_JUMP_IF_FALSE);
+        self.emit_opcode(OpCode::OP_POP);
+        self.statement();
+        let else_jump = self.emit_jump(OpCode::OP_JUMP);
+
+        self.patch_jump(then_jump);
+        self.emit_opcode(OpCode::OP_POP);
+
+        if self.matches(T![else]) {
+            self.statement()
+        }
+        self.patch_jump(else_jump);
+    }
+
     fn print_statement(&mut self) {
         self.expression();
         self.consume(T![;], "Expect ';' after value.");
@@ -262,6 +301,8 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.matches(T![print]) {
             self.print_statement();
+        } else if self.matches(T![if]) {
+            self.if_statement();
         } else if self.matches(T!['{']) {
             self.begin_scope();
             self.block();

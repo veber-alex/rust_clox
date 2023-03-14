@@ -58,8 +58,7 @@ impl VM {
 
         self.set_chunk(chunk);
 
-        // Safety: set_chunk() is called before run()
-        unsafe { self.run() }
+        self.run()
     }
 
     pub fn free_vm(&mut self) {
@@ -75,14 +74,15 @@ impl VM {
     }
 
     fn reset_stack(&mut self) {
+        free_array_memory(self.stack, STACK_MAX);
+        // TODO: Do we need a new stack here?
         self.stack = allocate_memory(STACK_MAX);
         self.stack_top = self.stack;
     }
 
-    // Safety: set_chunk() must be called before run()
     // FIXME: combine set_chunk() and run() ?
     // TODO: optimize the shit out of this loop + match
-    unsafe fn run(&mut self) -> InterpretResult {
+    fn run(&mut self) -> InterpretResult {
         use OpCode::*;
 
         loop {
@@ -189,6 +189,18 @@ impl VM {
                     let slot = self.read_byte() as usize;
                     unsafe { *self.stack.add(slot) = self.peek(0) };
                 }
+                OP_JUMP_IF_FALSE => {
+                    let offset = self.read_short() as usize;
+                    // Check if doing this branchless will be faster
+                    // (!bool::from(self.peek(0))) as usize * offset as usize
+                    if !bool::from(self.peek(0)) {
+                        self.ip = unsafe { self.ip.add(offset) };
+                    }
+                }
+                OP_JUMP => {
+                    let offset = self.read_short() as usize;
+                    self.ip = unsafe { self.ip.add(offset) };
+                }
             }
         }
     }
@@ -206,6 +218,14 @@ impl VM {
         self.ip = unsafe { self.ip.add(1) };
 
         byte
+    }
+
+    fn read_short(&mut self) -> u16 {
+        unsafe {
+            let short = u16::from_le_bytes([*self.ip.add(1), *self.ip]);
+            self.ip = self.ip.add(2);
+            short
+        }
     }
 
     // FIXME: inline this method to the match loop for safety

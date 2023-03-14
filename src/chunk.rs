@@ -24,6 +24,8 @@ pub enum OpCode {
     OP_NOT,
     OP_NEGATE,
     OP_PRINT,
+    OP_JUMP,
+    OP_JUMP_IF_FALSE,
     OP_RETURN,
 }
 
@@ -95,7 +97,14 @@ impl Chunk {
                 self.simple_instruction(instruction, offset)
             }
             OP_GET_LOCAL | OP_SET_LOCAL => self.byte_instruction(instruction, offset),
+            OP_JUMP_IF_FALSE | OP_JUMP => self.jump_instruction(instruction, offset, 1),
         }
+    }
+
+    fn jump_instruction(&self, op_code: OpCode, offset: usize, sign: usize) -> usize {
+        let jump = u16::from_le_bytes([self.code[offset + 2], self.code[offset + 1]]) as usize;
+        println!("{op_code:16?} {offset:4} -> {}", offset + 3 + sign * jump);
+        offset + 3
     }
 
     fn simple_instruction(&self, op_code: OpCode, offset: usize) -> usize {
