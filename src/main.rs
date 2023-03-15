@@ -19,7 +19,8 @@ mod vm;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let vm = VM::new();
+    let mut vm = VM::new();
+    vm.reset_stack();
 
     match args.as_slice() {
         [_] => repl(vm),

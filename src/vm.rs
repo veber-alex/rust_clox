@@ -26,15 +26,19 @@ const STACK_MAX: usize = FRAMES_MAX * U8_COUNT;
 #[derive(Clone, Copy)]
 struct CallFrame {
     function: *mut ObjFunction,
+
+    // Instruction pointer into the functions Chunk
     ip: *mut u8,
+
+    // Pointer to the VM stack, where the function stack frame starts
     slots: *mut Value,
 }
 
 impl CallFrame {
-    fn new(function: *mut ObjFunction, ip: *mut u8, slots: *mut Value) -> Self {
+    fn new(function: *mut ObjFunction, slots: *mut Value) -> Self {
         Self {
             function,
-            ip,
+            ip: unsafe { (*function).chunk.as_code_ptr() },
             slots,
         }
     }
@@ -52,7 +56,7 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        let mut vm = Self {
+        Self {
             frames: ptr::null_mut(),
             frame_count: 0,
             stack: ptr::null_mut(),
@@ -60,21 +64,19 @@ impl VM {
             strings: Table::new(),
             globals: Table::new(),
             objects: ObjPtr::null(),
-        };
-        vm.reset_stack();
-
-        vm
+        }
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
         let function = compile(self, source);
+
         if function.is_null() {
             return InterpretResult::CompileError;
         }
 
         self.push(Value::Obj(ObjPtr::new(function.cast())));
         unsafe {
-            let frame = CallFrame::new(function, (*function).chunk.as_code_ptr(), self.stack);
+            let frame = CallFrame::new(function, self.stack);
             *self.frames.add(self.frame_count) = frame;
             self.frame_count += 1;
         }
@@ -102,6 +104,7 @@ impl VM {
     // TODO: optimize the shit out of this loop + match
     fn run(&mut self) -> InterpretResult {
         use OpCode::*;
+
         let frame = unsafe { self.frames.add(self.frame_count - 1) };
 
         fn read_byte(frame: *mut CallFrame) -> u8 {

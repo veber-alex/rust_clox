@@ -13,7 +13,7 @@ use Precedence::*;
 
 pub fn compile(vm: &mut VM, source: &str) -> *mut ObjFunction {
     let scanner = Scanner::new(source);
-    let mut compiler = Compiler::new(FunctionKind::TYPE_SCRIPT, vm);
+    let mut compiler = Compiler::new(FunctionKind::TYPE_SCRIPT);
     let mut parser = Parser::new(vm, scanner, &mut compiler);
 
     parser.advance();
@@ -71,6 +71,7 @@ enum FunctionKind {
 }
 
 struct Compiler<'a> {
+    enclosing: *mut Compiler<'a>,
     function: *mut ObjFunction,
     kind: FunctionKind,
     locals: [Local<'a>; U8_COUNT],
@@ -79,8 +80,9 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(kind: FunctionKind, vm: &mut VM) -> Self {
-        let mut compiler = Compiler {
+    fn new(kind: FunctionKind) -> Self {
+        Compiler {
+            enclosing: ptr::null_mut(),
             function: ptr::null_mut(),
             kind,
             locals: [Local {
@@ -89,16 +91,7 @@ impl<'a> Compiler<'a> {
             }; U8_COUNT],
             local_count: 0,
             scope_depth: 0,
-        };
-
-        compiler.function = vm.new_function();
-
-        let local = &mut compiler.locals[0];
-        compiler.local_count += 1;
-        local.name.lexeme = "";
-        local.depth = 0;
-
-        compiler
+        }
     }
 }
 
@@ -109,19 +102,34 @@ pub struct Parser<'a> {
     had_error: Cell<bool>,
     panic_mode: Cell<bool>,
     vm: &'a mut VM,
-    compiler: &'a mut Compiler<'a>,
+    current_compiler: *mut Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(vm: &'a mut VM, scanner: Scanner<'a>, compiler: &'a mut Compiler<'a>) -> Self {
-        Self {
+    fn new(vm: &'a mut VM, scanner: Scanner<'a>, compiler: *mut Compiler<'a>) -> Self {
+        let mut parser = Self {
             scanner,
             current: Token::dummy(),
             previous: Token::dummy(),
             had_error: Cell::new(false),
             panic_mode: Cell::new(false),
             vm,
-            compiler,
+            current_compiler: compiler,
+        };
+        parser.init_compiler(parser.current_compiler);
+        parser
+    }
+
+    fn init_compiler(&mut self, compiler: *mut Compiler<'a>) {
+        unsafe {
+            (*compiler).enclosing = self.current_compiler;
+            self.current_compiler = compiler;
+            (*compiler).function = self.vm.new_function();
+
+            let local = &mut (*compiler).locals[0];
+            (*compiler).local_count += 1;
+            local.name.lexeme = "";
+            local.depth = 0;
         }
     }
 
@@ -223,7 +231,7 @@ impl<'a> Parser<'a> {
 
     fn end_compiler(&mut self) -> *mut ObjFunction {
         self.emit_return();
-        let function = self.compiler.function;
+        let function = unsafe { (*self.current_compiler).function };
 
         #[cfg(feature = "debug_prints")]
         {
@@ -235,10 +243,11 @@ impl<'a> Parser<'a> {
                         ObjPtr::new((*function).name.cast()).as_string_str()
                     }
                 };
-                self.current_chunk().disassemble_chunk("code");
+                self.current_chunk().disassemble_chunk(name);
             }
         }
 
+        self.current_compiler = unsafe { (*self.current_compiler).enclosing };
         function
     }
 
@@ -247,7 +256,7 @@ impl<'a> Parser<'a> {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        unsafe { &mut (*self.compiler.function).chunk }
+        unsafe { &mut (*(*self.current_compiler).function).chunk }
     }
 
     fn expression(&mut self) {
@@ -260,6 +269,28 @@ impl<'a> Parser<'a> {
         }
 
         self.consume(T!['}'], "Expect '}' after block.")
+    }
+
+    fn function(&mut self, kind: FunctionKind) {
+        let mut compiler = Compiler::new(kind);
+        self.init_compiler(&mut compiler);
+        self.begin_scope();
+
+        self.consume(T!['('], "Expect '(' after function name.");
+        self.consume(T![')'], "Expect ')' after parameters.");
+        self.consume(T!['{'], "Expect '{' before function body.");
+        self.block();
+
+        let function = self.end_compiler();
+        let constant = self.make_constant(Value::Obj(ObjPtr::new(function.cast())));
+        self.emit_bytes(OP_CONSTANT as u8, constant)
+    }
+
+    fn fun_declaration(&mut self) {
+        let global = self.parse_variable("Expect function name.");
+        self.mark_initialized();
+        self.function(FunctionKind::TYPE_FUNCTION);
+        self.define_variable(global);
     }
 
     fn var_declaration(&mut self) {
@@ -394,7 +425,9 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) {
-        if self.matches(T![var]) {
+        if self.matches(T![fun]) {
+            self.fun_declaration()
+        } else if self.matches(T![var]) {
             self.var_declaration()
         } else {
             self.statement();
@@ -458,82 +491,101 @@ impl<'a> Parser<'a> {
     }
 
     fn begin_scope(&mut self) {
-        self.compiler.scope_depth += 1;
+        unsafe {
+            (*self.current_compiler).scope_depth += 1;
+        }
     }
 
     fn end_scope(&mut self) {
-        self.compiler.scope_depth -= 1;
+        unsafe {
+            (*self.current_compiler).scope_depth -= 1;
 
-        while self.compiler.local_count > 0
-            && self.compiler.locals[self.compiler.local_count - 1].depth > self.compiler.scope_depth
-        {
-            // FIXME: Add a special POP_POPN to pop multiple values from the stack at once
-            self.emit_opcode(OP_POP);
-            self.compiler.local_count -= 1;
+            while (*self.current_compiler).local_count > 0
+                && (*self.current_compiler).locals[(*self.current_compiler).local_count - 1].depth
+                    > (*self.current_compiler).scope_depth
+            {
+                // FIXME: Add a special POP_POPN to pop multiple values from the stack at once
+                self.emit_opcode(OP_POP);
+                (*self.current_compiler).local_count -= 1;
+            }
         }
     }
 
     fn add_local(&mut self, name: Token<'a>) {
-        let Some(local) = self.compiler.locals.get_mut(self.compiler.local_count) else {
-            self.error("Too many local variables in function.");
-            return
-        };
+        unsafe {
+            let Some(local) = (*self.current_compiler).locals.get_mut((*self.current_compiler).local_count) else {
+                self.error("Too many local variables in function.");
+                return
+            };
 
-        *local = Local { name, depth: -1 };
+            *local = Local { name, depth: -1 };
 
-        self.compiler.local_count += 1;
+            (*self.current_compiler).local_count += 1;
+        }
     }
 
     fn declare_variable(&mut self) {
-        if self.compiler.scope_depth == 0 {
-            return;
-        }
-
-        let name = self.previous;
-        for local in self.compiler.locals[..self.compiler.local_count]
-            .iter()
-            .rev()
-        {
-            if local.depth != -1 && local.depth < self.compiler.scope_depth {
-                break;
+        unsafe {
+            if (*self.current_compiler).scope_depth == 0 {
+                return;
             }
 
-            if name.lexeme == local.name.lexeme {
-                self.error("Already a variable with this name in this scope.");
-                // FIXME: This break should not be here, it's a workaround borrow checker errors
-                break;
-            }
-        }
+            let name = self.previous;
+            for local in (*self.current_compiler).locals[..(*self.current_compiler).local_count]
+                .iter()
+                .rev()
+            {
+                if local.depth != -1 && local.depth < (*self.current_compiler).scope_depth {
+                    break;
+                }
 
-        self.add_local(name);
+                if name.lexeme == local.name.lexeme {
+                    self.error("Already a variable with this name in this scope.");
+                    // FIXME: This break should not be here, it's a workaround borrow checker errors
+                    break;
+                }
+            }
+
+            self.add_local(name);
+        }
     }
 
     fn parse_variable(&mut self, msg: &str) -> u8 {
         self.consume(T![ident], msg);
 
         self.declare_variable();
-        if self.compiler.scope_depth > 0 {
-            return 0;
+        unsafe {
+            if (*self.current_compiler).scope_depth > 0 {
+                return 0;
+            }
         }
 
         self.identifier_constant(self.previous)
     }
 
     fn mark_initialized(&mut self) {
-        self.compiler.locals[self.compiler.local_count - 1].depth = self.compiler.scope_depth;
+        unsafe {
+            if (*self.current_compiler).scope_depth == 0 {
+                return;
+            }
+            (*self.current_compiler).locals[(*self.current_compiler).local_count - 1].depth =
+                (*self.current_compiler).scope_depth;
+        }
     }
 
     fn define_variable(&mut self, global: u8) {
-        if self.compiler.scope_depth > 0 {
-            self.mark_initialized();
-            return;
+        unsafe {
+            if (*self.current_compiler).scope_depth > 0 {
+                self.mark_initialized();
+                return;
+            }
         }
 
         self.emit_bytes(OP_DEFINE_GLOBAL as u8, global)
     }
 
     fn named_variable(&mut self, token: Token<'_>, can_assign: bool) {
-        let mut arg = resolve_local(&self.compiler, self, token);
+        let mut arg = resolve_local(self.current_compiler, self, token);
         let (get_op, set_op) = if arg != -1 {
             (OP_GET_LOCAL, OP_SET_LOCAL)
         } else {
@@ -551,19 +603,21 @@ impl<'a> Parser<'a> {
 }
 
 // FIXME: This should return Option<u8>
-fn resolve_local(compiler: &Compiler<'_>, parser: &Parser<'_>, name: Token<'_>) -> i32 {
-    match compiler.locals[..compiler.local_count]
-        .iter()
-        .zip(0..compiler.local_count as i32)
-        .rev()
-        .find(|(local, _)| name.lexeme == local.name.lexeme)
-    {
-        Some((Local { depth: -1, .. }, i)) => {
-            parser.error("Can't read local variable in its own initializer.");
-            i
+fn resolve_local(compiler: *mut Compiler<'_>, parser: &Parser<'_>, name: Token<'_>) -> i32 {
+    unsafe {
+        match (*compiler).locals[..(*compiler).local_count]
+            .iter()
+            .zip(0..(*compiler).local_count as i32)
+            .rev()
+            .find(|(local, _)| name.lexeme == local.name.lexeme)
+        {
+            Some((Local { depth: -1, .. }, i)) => {
+                parser.error("Can't read local variable in its own initializer.");
+                i
+            }
+            Some((_, i)) => i,
+            None => -1,
         }
-        Some((_, i)) => i,
-        None => -1,
     }
 }
 
