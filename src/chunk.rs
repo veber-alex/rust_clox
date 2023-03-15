@@ -1,4 +1,9 @@
-use crate::value::Value;
+use std::ptr;
+
+use crate::{
+    memory::{free_array_memory, grow_capacity, reallocate_memory, Vector},
+    value::Value,
+};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
@@ -40,28 +45,65 @@ impl OpCode {
 }
 
 pub struct Chunk {
-    pub code: Vec<u8>,
-    pub constants: Vec<Value>,
-    pub lines: Vec<usize>,
+    code: *mut u8,
+    lines: *mut u32,
+    len: usize,
+    capacity: usize,
+    pub constants: Vector<Value>,
 }
 
 impl Chunk {
     pub fn new() -> Self {
         Chunk {
-            code: Vec::new(),
-            constants: Vec::new(),
-            lines: Vec::new(),
+            code: ptr::null_mut(),
+            lines: ptr::null_mut(),
+            constants: Vector::new(),
+            capacity: 0,
+            len: 0,
         }
     }
 
-    pub fn write_chunk(&mut self, byte: u8, line: usize) {
-        self.code.push(byte);
-        self.lines.push(line);
+    pub fn push(&mut self, byte: u8, line: u32) {
+        if self.len == self.capacity {
+            let old_capacity = self.capacity;
+            self.capacity = grow_capacity(old_capacity);
+            self.code = reallocate_memory(self.code, old_capacity, self.capacity);
+            self.lines = reallocate_memory(self.lines, old_capacity, self.capacity);
+        }
+
+        unsafe {
+            *self.code.add(self.len) = byte;
+            *self.lines.add(self.len) = line;
+        };
+        self.len += 1;
+    }
+
+    pub fn write_byte(&self, offset: usize, byte: u8) {
+        unsafe { *self.code.add(offset) = byte }
+    }
+
+    pub fn as_code_ptr(&self) -> *mut u8 {
+        self.code
+    }
+
+    pub fn read_line(&self, offset: usize) -> u32 {
+        unsafe { *self.lines.add(offset) }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
+    }
+
+    pub fn free_chunk(&mut self) {
+        self.constants.free();
+        free_array_memory(self.code, self.capacity);
+        free_array_memory(self.lines, self.capacity);
+        *self = Chunk::new();
     }
 }
 
@@ -71,7 +113,7 @@ impl Chunk {
         println!("== {name} ==");
 
         let mut offset = 0;
-        while offset < self.code.len() {
+        while offset < self.len {
             offset = self.disassemble_instruction(offset)
         }
     }
@@ -80,13 +122,13 @@ impl Chunk {
         use OpCode::*;
 
         print!("{offset:04} ");
-        if offset > 0 && self.lines[offset] == self.lines[offset - 1] {
+        if offset > 0 && unsafe { *self.lines.add(offset) == *self.lines.add(offset - 1) } {
             print!("   | ")
         } else {
-            print!("{:4} ", self.lines[offset])
+            print!("{:4} ", unsafe { *self.lines.add(offset) })
         }
 
-        let byte = self.code[offset];
+        let byte = unsafe { *self.code.add(offset) };
         // Safety: byte is a valid opcode by compiler construction
         let instruction = unsafe { OpCode::from_u8_unchecked(byte) };
         match instruction {
@@ -104,7 +146,9 @@ impl Chunk {
     }
 
     fn jump_instruction(&self, op_code: OpCode, offset: usize, sign: isize) -> usize {
-        let jump = u16::from_le_bytes([self.code[offset + 2], self.code[offset + 1]]) as isize;
+        let jump = unsafe {
+            u16::from_le_bytes([*self.code.add(offset + 2), *self.code.add(offset + 1)]) as isize
+        };
         println!(
             "{op_code:16?} {offset:4} -> {}",
             offset as isize + 3 + sign * jump
@@ -118,14 +162,14 @@ impl Chunk {
     }
 
     fn constant_instruction(&self, op_code: OpCode, offset: usize) -> usize {
-        let constant_index = self.code[offset + 1];
+        let constant_index = unsafe { *self.code.add(offset + 1) };
         print!("{op_code:16?} {constant_index:4} ");
-        println!("'{:?}'", self.constants[constant_index as usize]);
+        println!("'{:?}'", self.constants.get(constant_index as usize));
         offset + 2
     }
 
     fn byte_instruction(&self, op_code: OpCode, offset: usize) -> usize {
-        let slot = self.code[offset + 1];
+        let slot = unsafe { *self.code.add(offset + 1) };
         print!("{op_code:16?} {slot:4} ");
         offset + 2
     }

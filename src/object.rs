@@ -1,5 +1,7 @@
 use std::ptr;
 
+use crate::chunk::Chunk;
+
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct ObjPtr(*mut Obj);
@@ -26,19 +28,21 @@ impl ObjPtr {
         self.kind() == ObjKind::OBJ_STRING
     }
 
-    // Safety: Obj must be of type ObjString
-    pub unsafe fn as_string(&self) -> *mut ObjString {
+    pub fn as_string(&self) -> *mut ObjString {
         self.0.cast()
     }
 
-    // Safety: Obj must be of type ObjString
-    pub unsafe fn as_string_str<'a>(&self) -> &'a str {
+    pub fn as_string_str<'a>(&self) -> &'a str {
         // Safety: Obj must be of type ObjString
         unsafe {
             let ptr = (*self.as_string()).ptr;
             let len = (*self.as_string()).len;
             &*(ptr::slice_from_raw_parts(ptr, len) as *const str)
         }
+    }
+
+    pub fn as_function(&self) -> *mut ObjFunction {
+        self.0.cast()
     }
 
     pub fn kind(&self) -> ObjKind {
@@ -52,12 +56,21 @@ impl ObjPtr {
 #[allow(non_camel_case_types)]
 pub enum ObjKind {
     OBJ_STRING,
+    OBJ_FUNCTION,
 }
 
 #[repr(C)]
 pub struct Obj {
     pub kind: ObjKind,
     pub next: ObjPtr,
+}
+
+#[repr(C)]
+pub struct ObjFunction {
+    obj: Obj,
+    pub arity: i32,
+    pub chunk: Chunk,
+    pub name: *mut ObjString,
 }
 
 #[repr(C)]

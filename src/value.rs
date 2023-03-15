@@ -18,10 +18,10 @@ impl PartialEq for Value {
             (Number(l0), Number(r0)) => l0 == r0,
             (Boolean(l0), Boolean(r0)) => l0 == r0,
             (Nil, Nil) => true,
-            // Safety: Obj is alive and valid
             (Obj(l0), Obj(r0)) => match (l0.kind(), r0.kind()) {
-                // Safety: l0 and r0 are valid ObjString due to kind check
-                (OBJ_STRING, OBJ_STRING) => unsafe { l0.as_string() == r0.as_string() },
+                (OBJ_STRING, OBJ_STRING) => l0.as_string() == r0.as_string(),
+                (OBJ_FUNCTION, OBJ_FUNCTION) => todo!(),
+                _ => false,
             },
             _ => false,
         }
@@ -35,12 +35,16 @@ impl std::fmt::Debug for Value {
             Nil => write!(f, "Nil"),
             Number(number) => write!(f, "{number}"),
             Boolean(boolean) => write!(f, "{boolean}"),
-            // Safety: Obj is alive and valid
             Obj(obj) => match obj.kind() {
-                OBJ_STRING => {
-                    // Safety: obj is a valid ObjString due to kind check
-                    write!(f, "{}", unsafe { obj.as_string_str() })
-                }
+                OBJ_STRING => write!(f, "{}", obj.as_string_str()),
+                OBJ_FUNCTION => unsafe {
+                    let name = (*obj.as_function()).name;
+                    if name.is_null() {
+                        return write!(f, "<script>");
+                    }
+                    let name = ObjPtr::new(name.cast()).as_string_str();
+                    write!(f, "<fn {}>", name)
+                },
             },
         }
     }

@@ -73,7 +73,7 @@ macro_rules! T {
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub lexeme: &'a str,
-    pub line: usize,
+    pub line: u32,
 }
 
 impl<'a> Token<'a> {
@@ -90,7 +90,7 @@ pub struct Scanner<'a> {
     source: &'a str,
     start: usize,
     chars: CharIndices<'a>,
-    line: usize,
+    line: u32,
 }
 
 impl<'a> Scanner<'a> {

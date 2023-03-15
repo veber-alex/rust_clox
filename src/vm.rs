@@ -2,9 +2,9 @@ use std::{hint::unreachable_unchecked, ptr};
 
 use crate::{
     chunk::{Chunk, OpCode},
-    compiler::compile,
+    compiler::{compile, U8_COUNT},
     memory::{allocate_memory, free_array_memory, free_objects},
-    object::{hash_string, Obj, ObjKind, ObjPtr, ObjString},
+    object::{hash_string, Obj, ObjFunction, ObjKind, ObjPtr, ObjString},
     table::{free_table, table_delete, table_find_string, table_get, table_set, Table},
     value::Value,
 };
@@ -20,11 +20,29 @@ macro_rules! binary_op {
     }};
 }
 
-const STACK_MAX: usize = 256;
+const FRAMES_MAX: usize = 64;
+const STACK_MAX: usize = FRAMES_MAX * U8_COUNT;
+
+#[derive(Clone, Copy)]
+struct CallFrame {
+    function: *mut ObjFunction,
+    ip: *mut u8,
+    slots: *mut Value,
+}
+
+impl CallFrame {
+    fn new(function: *mut ObjFunction, ip: *mut u8, slots: *mut Value) -> Self {
+        Self {
+            function,
+            ip,
+            slots,
+        }
+    }
+}
 
 pub struct VM {
-    chunk: Chunk,
-    ip: *const u8,
+    frames: *mut CallFrame,
+    frame_count: usize,
     stack: *mut Value,
     stack_top: *mut Value,
     strings: Table,
@@ -35,8 +53,8 @@ pub struct VM {
 impl VM {
     pub fn new() -> Self {
         let mut vm = Self {
-            chunk: Chunk::new(),
-            ip: ptr::null(),
+            frames: ptr::null_mut(),
+            frame_count: 0,
             stack: ptr::null_mut(),
             stack_top: ptr::null_mut(),
             strings: Table::new(),
@@ -49,15 +67,17 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
-        // FIXME: can we use the chunk in self instead ?
-        let mut chunk = Chunk::new();
-
-        if !compile(self, source, &mut chunk) {
+        let function = compile(self, source);
+        if function.is_null() {
             return InterpretResult::CompileError;
-        };
+        }
 
-        self.set_chunk(chunk);
-
+        self.push(Value::Obj(ObjPtr::new(function.cast())));
+        unsafe {
+            let frame = CallFrame::new(function, (*function).chunk.as_code_ptr(), self.stack);
+            *self.frames.add(self.frame_count) = frame;
+            self.frame_count += 1;
+        }
         self.run()
     }
 
@@ -66,24 +86,57 @@ impl VM {
         free_table(&mut self.strings);
         free_table(&mut self.globals);
         free_array_memory(self.stack, STACK_MAX);
+        free_array_memory(self.frames, FRAMES_MAX);
     }
 
-    fn set_chunk(&mut self, chunk: Chunk) {
-        self.ip = chunk.code.as_ptr();
-        self.chunk = chunk;
-    }
-
-    fn reset_stack(&mut self) {
+    pub fn reset_stack(&mut self) {
         free_array_memory(self.stack, STACK_MAX);
-        // TODO: Do we need a new stack here?
         self.stack = allocate_memory(STACK_MAX);
         self.stack_top = self.stack;
+
+        free_array_memory(self.frames, FRAMES_MAX);
+        self.frame_count = 0;
+        self.frames = allocate_memory(FRAMES_MAX);
     }
 
-    // FIXME: combine set_chunk() and run() ?
     // TODO: optimize the shit out of this loop + match
     fn run(&mut self) -> InterpretResult {
         use OpCode::*;
+        let frame = unsafe { self.frames.add(self.frame_count - 1) };
+
+        fn read_byte(frame: *mut CallFrame) -> u8 {
+            unsafe {
+                let byte = *(*frame).ip;
+                (*frame).ip = (*frame).ip.add(1);
+                byte
+            }
+        }
+
+        fn read_short(frame: *mut CallFrame) -> u16 {
+            unsafe {
+                let short = u16::from_le_bytes([*(*frame).ip.add(1), *(*frame).ip]);
+                (*frame).ip = (*frame).ip.add(2);
+                short
+            }
+        }
+
+        fn read_constant(frame: *mut CallFrame) -> Value {
+            unsafe {
+                (*(*frame).function)
+                    .chunk
+                    .constants
+                    .get(read_byte(frame) as usize)
+            }
+        }
+
+        fn read_string(frame: *mut CallFrame) -> *mut ObjString {
+            unsafe {
+                let Value::Obj(obj) = read_constant(frame) else {
+                unreachable_unchecked()
+            };
+                obj.as_string()
+            }
+        }
 
         loop {
             #[cfg(feature = "debug_prints")]
@@ -96,18 +149,21 @@ impl VM {
                     slot = slot.wrapping_add(1);
                 }
                 println!();
-                self.chunk
-                    .disassemble_instruction(self.ip as usize - self.chunk.code.as_ptr() as usize);
+                unsafe {
+                    (*(*frame).function).chunk.disassemble_instruction(
+                        (*frame).ip as usize - (*(*frame).function).chunk.as_code_ptr() as usize,
+                    );
+                }
             }
 
-            let byte = self.read_byte();
+            let byte = read_byte(frame);
 
             // Safety: byte is a valid opcode by compiler bytecode construction
             let instruction = unsafe { OpCode::from_u8_unchecked(byte) };
 
             match instruction {
                 OP_CONSTANT => {
-                    let constant = self.read_constant();
+                    let constant = read_constant(frame);
                     self.push(constant);
                 }
                 OP_RETURN => {
@@ -157,53 +213,53 @@ impl VM {
                     self.pop();
                 }
                 OP_DEFINE_GLOBAL => {
-                    let name = self.read_string();
+                    let name = read_string(frame);
                     table_set(&mut self.globals, name, self.peek(0));
                     self.pop();
                 }
                 OP_GET_GLOBAL => {
-                    let name = self.read_string();
+                    let name = read_string(frame);
                     let mut value = Value::Nil;
                     if !table_get(&mut self.globals, name, &mut value) {
-                        let string = unsafe { ObjPtr::new(name.cast()).as_string_str() };
+                        let string = ObjPtr::new(name.cast()).as_string_str();
                         self.runtime_error(&format!("Undefined variable '{string}'."));
                         return InterpretResult::RuntimeError;
                     }
                     self.push(value);
                 }
                 OP_SET_GLOBAL => {
-                    let name = self.read_string();
+                    let name = read_string(frame);
                     if table_set(&mut self.globals, name, self.peek(0)) {
                         table_delete(&mut self.globals, name);
-                        let string = unsafe { ObjPtr::new(name.cast()).as_string_str() };
+                        let string = ObjPtr::new(name.cast()).as_string_str();
                         self.runtime_error(&format!("Undefined variable '{string}'."));
                         return InterpretResult::RuntimeError;
                     }
                 }
                 OP_GET_LOCAL => {
-                    let slot = self.read_byte() as usize;
-                    let local = unsafe { *self.stack.add(slot) };
+                    let slot = read_byte(frame) as usize;
+                    let local = unsafe { *(*frame).slots.add(slot) };
                     self.push(local);
                 }
                 OP_SET_LOCAL => {
-                    let slot = self.read_byte() as usize;
-                    unsafe { *self.stack.add(slot) = self.peek(0) };
+                    let slot = read_byte(frame) as usize;
+                    unsafe { *(*frame).slots.add(slot) = self.peek(0) };
                 }
                 OP_JUMP_IF_FALSE => {
-                    let offset = self.read_short() as usize;
+                    let offset = read_short(frame) as usize;
                     // Check if doing this branchless will be faster
                     // (!bool::from(self.peek(0))) as usize * offset as usize
                     if !bool::from(self.peek(0)) {
-                        self.ip = unsafe { self.ip.add(offset) };
+                        unsafe { (*frame).ip = (*frame).ip.add(offset) };
                     }
                 }
                 OP_JUMP => {
-                    let offset = self.read_short() as usize;
-                    self.ip = unsafe { self.ip.add(offset) };
+                    let offset = read_short(frame) as usize;
+                    unsafe { (*frame).ip = (*frame).ip.add(offset) };
                 }
                 OP_LOOP => {
-                    let offset = self.read_short() as usize;
-                    self.ip = unsafe { self.ip.sub(offset) };
+                    let offset = read_short(frame) as usize;
+                    unsafe { (*frame).ip = (*frame).ip.sub(offset) };
                 }
             }
         }
@@ -212,43 +268,6 @@ impl VM {
     fn peek(&self, distance: isize) -> Value {
         // Safety: a valid Value exists at that distance by compiler bytecode construction
         unsafe { *self.stack_top.offset(-1 - distance) }
-    }
-
-    fn read_byte(&mut self) -> u8 {
-        // Safety: The instruction pointer is in bounds by compiler bytecode construction
-        let byte = unsafe { *self.ip };
-
-        // Safety: The new pointer is in bounds or 1 byte over
-        self.ip = unsafe { self.ip.add(1) };
-
-        byte
-    }
-
-    fn read_short(&mut self) -> u16 {
-        unsafe {
-            let short = u16::from_le_bytes([*self.ip.add(1), *self.ip]);
-            self.ip = self.ip.add(2);
-            short
-        }
-    }
-
-    // FIXME: inline this method to the match loop for safety
-    // calling it in any other place is unsafe because the next bytecode may not be a constant
-    fn read_constant(&mut self) -> Value {
-        let byte = self.read_byte();
-
-        // Safety: constant exists at index by compiler bytecode construction
-        unsafe { *self.chunk.constants.get_unchecked(byte as usize) }
-    }
-
-    // FIXME: like above this is unsafe
-    fn read_string(&mut self) -> *mut ObjString {
-        unsafe {
-            let Value::Obj(obj) = self.read_constant() else {
-                unreachable_unchecked()
-            };
-            obj.as_string()
-        }
     }
 
     fn push(&mut self, value: Value) {
@@ -264,12 +283,17 @@ impl VM {
         unsafe { *self.stack_top }
     }
 
+    #[cold]
     fn runtime_error(&mut self, msg: &str) {
         eprintln!("{msg}");
 
-        let instruction = self.ip as usize - self.chunk.code.as_ptr() as usize - 1;
-        let line = self.chunk.lines[instruction];
-        eprintln!("[line {line}] in script");
+        unsafe {
+            let frame = self.frames.add(self.frame_count - 1);
+            let instruction =
+                (*frame).ip as usize - (*(*frame).function).chunk.as_code_ptr() as usize - 1;
+            let line = (*(*frame).function).chunk.read_line(instruction);
+            eprintln!("[line {line}] in script");
+        }
 
         self.reset_stack();
     }
@@ -279,9 +303,9 @@ impl VM {
         self.pop();
         self.pop();
         // Safety: obj is a valid ObjString due to kind check
-        let b = unsafe { b.as_string_str() };
+        let b = b.as_string_str();
         // Safety: obj is a valid ObjString due to kind check
-        let a = unsafe { a.as_string_str() };
+        let a = a.as_string_str();
         let len = a.len() + b.len();
         let ptr: *mut u8 = allocate_memory(len);
 
@@ -325,7 +349,7 @@ impl VM {
 
     fn allocate_string(&mut self, ptr: *mut u8, len: usize, hash: u32) -> *mut ObjString {
         // Safety: OBJ_STRING allocates an ObjString
-        let string = unsafe { self.allocate_object(ObjKind::OBJ_STRING).as_string() };
+        let string = self.allocate_object::<ObjString>(ObjKind::OBJ_STRING);
 
         // Safety: string is a valid ObjString
         unsafe {
@@ -339,11 +363,9 @@ impl VM {
         string
     }
 
-    // TODO: Should this be generic?
-    fn allocate_object(&mut self, kind: ObjKind) -> ObjPtr {
-        let obj: *mut Obj = match kind {
-            ObjKind::OBJ_STRING => allocate_memory::<ObjString>(1).cast(),
-        };
+    fn allocate_object<T>(&mut self, kind: ObjKind) -> *mut T {
+        let object = allocate_memory::<T>(1);
+        let obj: *mut Obj = object.cast();
 
         // Safety: types are compatible due to layout
         unsafe {
@@ -356,7 +378,19 @@ impl VM {
         let obj = ObjPtr::new(obj);
         self.objects = obj;
 
-        obj
+        object
+    }
+
+    pub fn new_function(&mut self) -> *mut ObjFunction {
+        let function = self.allocate_object::<ObjFunction>(ObjKind::OBJ_FUNCTION);
+
+        unsafe {
+            (*function).arity = 0;
+            (*function).name = ptr::null_mut();
+            (*function).chunk = Chunk::new();
+        }
+
+        function
     }
 }
 

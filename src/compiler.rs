@@ -1,7 +1,8 @@
-use std::cell::Cell;
+use std::{cell::Cell, ptr};
 
 use crate::{
     chunk::{Chunk, OpCode},
+    object::{ObjFunction, ObjPtr},
     scanner::{Scanner, Token, TokenKind},
     value::Value,
     vm::VM,
@@ -10,10 +11,10 @@ use crate::{
 use OpCode::*;
 use Precedence::*;
 
-pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
+pub fn compile(vm: &mut VM, source: &str) -> *mut ObjFunction {
     let scanner = Scanner::new(source);
-    let mut compiler = Compiler::new();
-    let mut parser = Parser::new(vm, scanner, chunk, &mut compiler);
+    let mut compiler = Compiler::new(FunctionKind::TYPE_SCRIPT, vm);
+    let mut parser = Parser::new(vm, scanner, &mut compiler);
 
     parser.advance();
 
@@ -21,9 +22,13 @@ pub fn compile(vm: &mut VM, source: &str, chunk: &mut Chunk) -> bool {
         parser.declaration();
     }
 
-    parser.end_compiler();
+    let function = parser.end_compiler();
 
-    !parser.had_error.get()
+    if parser.had_error.get() {
+        ptr::null_mut()
+    } else {
+        function
+    }
 }
 
 // FIXME: try to make this a real
@@ -43,7 +48,7 @@ mod Precedence {
 }
 
 type ParseFn = fn(&mut Parser<'_>, bool);
-const U8_COUNT: usize = u8::MAX as usize + 1;
+pub const U8_COUNT: usize = u8::MAX as usize + 1;
 
 #[derive(Clone, Copy)]
 pub struct ParseRule {
@@ -58,22 +63,42 @@ struct Local<'a> {
     depth: i32,
 }
 
+#[derive(Clone, Copy)]
+#[allow(non_camel_case_types)]
+enum FunctionKind {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT,
+}
+
 struct Compiler<'a> {
+    function: *mut ObjFunction,
+    kind: FunctionKind,
     locals: [Local<'a>; U8_COUNT],
     local_count: usize,
     scope_depth: i32,
 }
 
 impl<'a> Compiler<'a> {
-    fn new() -> Self {
-        Compiler {
+    fn new(kind: FunctionKind, vm: &mut VM) -> Self {
+        let mut compiler = Compiler {
+            function: ptr::null_mut(),
+            kind,
             locals: [Local {
                 name: Token::dummy(),
                 depth: 0,
             }; U8_COUNT],
             local_count: 0,
             scope_depth: 0,
-        }
+        };
+
+        compiler.function = vm.new_function();
+
+        let local = &mut compiler.locals[0];
+        compiler.local_count += 1;
+        local.name.lexeme = "";
+        local.depth = 0;
+
+        compiler
     }
 }
 
@@ -83,25 +108,18 @@ pub struct Parser<'a> {
     previous: Token<'a>,
     had_error: Cell<bool>,
     panic_mode: Cell<bool>,
-    chunk: &'a mut Chunk,
     vm: &'a mut VM,
     compiler: &'a mut Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(
-        vm: &'a mut VM,
-        scanner: Scanner<'a>,
-        chunk: &'a mut Chunk,
-        compiler: &'a mut Compiler<'a>,
-    ) -> Self {
+    fn new(vm: &'a mut VM, scanner: Scanner<'a>, compiler: &'a mut Compiler<'a>) -> Self {
         Self {
             scanner,
             current: Token::dummy(),
             previous: Token::dummy(),
             had_error: Cell::new(false),
             panic_mode: Cell::new(false),
-            chunk,
             vm,
             compiler,
         }
@@ -146,7 +164,7 @@ impl<'a> Parser<'a> {
 
     fn emit_byte(&mut self, byte: u8) {
         let line = self.previous.line;
-        self.current_chunk().write_chunk(byte, line);
+        self.current_chunk().push(byte, line);
     }
 
     // TODO: Replace this with emit_opcode_2
@@ -160,13 +178,13 @@ impl<'a> Parser<'a> {
         self.emit_byte(0xff);
         self.emit_byte(0xff);
 
-        self.current_chunk().code.len() - 2
+        self.current_chunk().len() - 2
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
         self.emit_opcode(OP_LOOP);
 
-        let offset = self.current_chunk().code.len() - loop_start + 2;
+        let offset = self.current_chunk().len() - loop_start + 2;
         if offset > u16::MAX as usize {
             self.error("Loop body too large.");
         }
@@ -176,14 +194,16 @@ impl<'a> Parser<'a> {
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.current_chunk().code.len() - offset - 2;
+        let jump = self.current_chunk().len() - offset - 2;
 
         if jump > u16::MAX as usize {
             self.error("Too much code to jump over.");
         }
 
-        self.current_chunk().code[offset] = ((jump >> 8) & 0xff) as u8;
-        self.current_chunk().code[offset + 1] = (jump & 0xff) as u8;
+        self.current_chunk()
+            .write_byte(offset, ((jump >> 8) & 0xff) as u8);
+        self.current_chunk()
+            .write_byte(offset + 1, (jump & 0xff) as u8);
     }
 
     fn emit_constant(&mut self, value: Value) {
@@ -201,15 +221,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn end_compiler(&mut self) {
+    fn end_compiler(&mut self) -> *mut ObjFunction {
         self.emit_return();
+        let function = self.compiler.function;
 
         #[cfg(feature = "debug_prints")]
         {
             if !self.had_error.get() {
+                let name = unsafe {
+                    if (*function).name.is_null() {
+                        "script"
+                    } else {
+                        ObjPtr::new((*function).name.cast()).as_string_str()
+                    }
+                };
                 self.current_chunk().disassemble_chunk("code");
             }
         }
+
+        function
     }
 
     fn emit_return(&mut self) {
@@ -217,7 +247,7 @@ impl<'a> Parser<'a> {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        self.chunk
+        unsafe { &mut (*self.compiler.function).chunk }
     }
 
     fn expression(&mut self) {
@@ -264,7 +294,7 @@ impl<'a> Parser<'a> {
             self.expression_statement()
         }
 
-        let mut loop_start = self.current_chunk().code.len();
+        let mut loop_start = self.current_chunk().len();
         let mut exit_jump = usize::MAX;
         if !self.matches(T![;]) {
             self.expression();
@@ -277,7 +307,7 @@ impl<'a> Parser<'a> {
 
         if !self.matches(T![')']) {
             let body_jump = self.emit_jump(OP_JUMP);
-            let increment_start = self.current_chunk().code.len();
+            let increment_start = self.current_chunk().len();
             self.expression();
             self.emit_opcode(OP_POP);
             self.consume(T![')'], "Expect ')' after for clauses.");
@@ -324,7 +354,7 @@ impl<'a> Parser<'a> {
     }
 
     fn while_statement(&mut self) {
-        let loop_start = self.current_chunk().code.len();
+        let loop_start = self.current_chunk().len();
 
         self.consume(T!['('], "Expect '(' after 'while'.");
         self.expression();
