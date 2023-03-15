@@ -201,6 +201,10 @@ impl VM {
                     let offset = self.read_short() as usize;
                     self.ip = unsafe { self.ip.add(offset) };
                 }
+                OP_LOOP => {
+                    let offset = self.read_short() as usize;
+                    self.ip = unsafe { self.ip.sub(offset) };
+                }
             }
         }
     }

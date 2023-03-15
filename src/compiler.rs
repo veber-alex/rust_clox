@@ -163,6 +163,18 @@ impl<'a> Parser<'a> {
         self.current_chunk().code.len() - 2
     }
 
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_opcode(OP_LOOP);
+
+        let offset = self.current_chunk().code.len() - loop_start + 2;
+        if offset > u16::MAX as usize {
+            self.error("Loop body too large.");
+        }
+
+        self.emit_byte(((offset >> 8) & 0xff) as u8);
+        self.emit_byte((offset & 0xff) as u8);
+    }
+
     fn patch_jump(&mut self, offset: usize) {
         let jump = self.current_chunk().code.len() - offset - 2;
 
@@ -240,6 +252,52 @@ impl<'a> Parser<'a> {
         self.emit_opcode(OP_POP);
     }
 
+    fn for_statement(&mut self) {
+        self.begin_scope();
+
+        self.consume(T!['('], "Expect '(' after 'for'.");
+        if self.matches(T![;]) {
+            // No initializer.
+        } else if self.matches(T![var]) {
+            self.var_declaration();
+        } else {
+            self.expression_statement()
+        }
+
+        let mut loop_start = self.current_chunk().code.len();
+        let mut exit_jump = usize::MAX;
+        if !self.matches(T![;]) {
+            self.expression();
+            self.consume(T![;], "Expect ';' after loop condition.");
+
+            // Jump out of the loop if the condition is false.
+            exit_jump = self.emit_jump(OP_JUMP_IF_FALSE);
+            self.emit_opcode(OP_POP); // Condition.
+        }
+
+        if !self.matches(T![')']) {
+            let body_jump = self.emit_jump(OP_JUMP);
+            let increment_start = self.current_chunk().code.len();
+            self.expression();
+            self.emit_opcode(OP_POP);
+            self.consume(T![')'], "Expect ')' after for clauses.");
+
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
+        }
+
+        self.statement();
+        self.emit_loop(loop_start);
+
+        if exit_jump != usize::MAX {
+            self.patch_jump(exit_jump);
+            self.emit_opcode(OP_POP); // Condition.
+        }
+
+        self.end_scope()
+    }
+
     fn if_statement(&mut self) {
         self.consume(T!['('], "Expect '(' after 'if'.");
         self.expression();
@@ -263,6 +321,22 @@ impl<'a> Parser<'a> {
         self.expression();
         self.consume(T![;], "Expect ';' after value.");
         self.emit_opcode(OP_PRINT)
+    }
+
+    fn while_statement(&mut self) {
+        let loop_start = self.current_chunk().code.len();
+
+        self.consume(T!['('], "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(T![')'], "Expect ')' after condition.");
+
+        let exit_jump = self.emit_jump(OP_JUMP_IF_FALSE);
+        self.emit_opcode(OP_POP);
+        self.statement();
+        self.emit_loop(loop_start);
+
+        self.patch_jump(exit_jump);
+        self.emit_opcode(OP_POP);
     }
 
     fn synchronize(&mut self) {
@@ -304,8 +378,12 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.matches(T![print]) {
             self.print_statement();
+        } else if self.matches(T![for]) {
+            self.for_statement();
         } else if self.matches(T![if]) {
             self.if_statement();
+        } else if self.matches(T![while]) {
+            self.while_statement();
         } else if self.matches(T!['{']) {
             self.begin_scope();
             self.block();
