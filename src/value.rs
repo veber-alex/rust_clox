@@ -45,6 +45,7 @@ impl std::fmt::Debug for Value {
                     let name = ObjPtr::new(name.cast()).as_string_str();
                     write!(f, "<fn {}>", name)
                 },
+                OBJ_NATIVE => write!(f, "<native fn>"),
             },
         }
     }

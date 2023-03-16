@@ -1,7 +1,6 @@
 [build]
 rustflags = [
-    "-Wclippy::undocumented_unsafe_blocks",
     "-Wclippy::dbg_macro",
     "-Wrust_2018_idioms",
-    "-Funsafe_op_in_unsafe_fn",
+    "-Aclippy::new_without_default",
 ]

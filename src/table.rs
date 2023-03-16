@@ -87,7 +87,7 @@ pub fn table_get(table: *mut Table, key: *mut ObjString, value: *mut Value) -> b
         }
 
         *value = (*entry).value;
-        return true;
+        true
     }
 }
 

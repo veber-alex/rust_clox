@@ -1,10 +1,10 @@
-use std::{hint::unreachable_unchecked, ptr};
+use std::{hint::unreachable_unchecked, ptr, sync::LazyLock, time::Instant};
 
 use crate::{
     chunk::{Chunk, OpCode},
     compiler::{compile, U8_COUNT},
     memory::{allocate_memory, free_array_memory, free_objects},
-    object::{hash_string, Obj, ObjFunction, ObjKind, ObjPtr, ObjString},
+    object::{hash_string, NativeFn, Obj, ObjFunction, ObjKind, ObjNative, ObjPtr, ObjString},
     table::{free_table, table_delete, table_find_string, table_get, table_set, Table},
     value::Value,
 };
@@ -23,6 +23,8 @@ macro_rules! binary_op {
 const FRAMES_MAX: usize = 64;
 const STACK_MAX: usize = FRAMES_MAX * U8_COUNT;
 
+static START_INSTANT: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+
 #[derive(Clone, Copy)]
 struct CallFrame {
     function: *mut ObjFunction,
@@ -32,16 +34,6 @@ struct CallFrame {
 
     // Pointer to the VM stack, where the function stack frame starts
     slots: *mut Value,
-}
-
-impl CallFrame {
-    fn new(function: *mut ObjFunction, slots: *mut Value) -> Self {
-        Self {
-            function,
-            ip: unsafe { (*function).chunk.as_code_ptr() },
-            slots,
-        }
-    }
 }
 
 pub struct VM {
@@ -56,6 +48,8 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
+        let _ = START_INSTANT.elapsed();
+
         Self {
             frames: ptr::null_mut(),
             frame_count: 0,
@@ -96,6 +90,8 @@ impl VM {
         free_array_memory(self.frames, FRAMES_MAX);
         self.frame_count = 0;
         self.frames = allocate_memory(FRAMES_MAX);
+
+        self.define_native("clock", clock_native);
     }
 
     // TODO: optimize the shit out of this loop + match
@@ -316,6 +312,13 @@ impl VM {
         if let Value::Obj(obj) = value {
             match obj.kind() {
                 ObjKind::OBJ_FUNCTION => return self.call(obj.as_function(), arg_count),
+                ObjKind::OBJ_NATIVE => unsafe {
+                    let native = obj.as_native_fn();
+                    let result = native(arg_count as i32, self.stack_top.sub(arg_count as usize));
+                    self.stack_top = self.stack_top.sub(arg_count as usize + 1);
+                    self.push(result);
+                    return true;
+                },
                 _ => {}
             }
         }
@@ -357,6 +360,20 @@ impl VM {
         }
 
         self.reset_stack();
+    }
+
+    fn define_native(&mut self, name: &str, function: NativeFn) {
+        let string = self.copy_string(name);
+        self.push(Value::Obj(string));
+
+        let native = self.new_native(function).cast();
+        let value = Value::Obj(ObjPtr::new(native));
+        self.push(value);
+
+        table_set(&mut self.globals, string.as_string(), value);
+
+        self.pop();
+        self.pop();
     }
 
     // Safety: a and b must be ObjString
@@ -453,6 +470,14 @@ impl VM {
 
         function
     }
+
+    pub fn new_native(&mut self, function: NativeFn) -> *mut ObjNative {
+        let native = self.allocate_object::<ObjNative>(ObjKind::OBJ_NATIVE);
+
+        unsafe { (*native).function = function }
+
+        native
+    }
 }
 
 #[must_use]
@@ -460,4 +485,8 @@ pub enum InterpretResult {
     Ok,
     CompileError,
     RuntimeError,
+}
+
+fn clock_native(_: i32, _: *mut Value) -> Value {
+    Value::Number(START_INSTANT.elapsed().as_secs_f64())
 }

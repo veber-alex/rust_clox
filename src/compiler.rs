@@ -124,6 +124,7 @@ impl<'a> Parser<'a> {
         unsafe {
             (*compiler).enclosing = self.current_compiler;
             (*compiler).function = self.vm.new_function();
+            (*compiler).kind = kind;
             self.current_compiler = compiler;
             if kind != FunctionKind::TYPE_SCRIPT {
                 (*(*self.current_compiler).function).name =

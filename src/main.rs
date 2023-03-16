@@ -1,6 +1,7 @@
 #![feature(variant_count)]
 #![feature(char_indices_offset)]
 #![feature(let_chains)]
+#![feature(once_cell)]
 
 use std::process::exit;
 

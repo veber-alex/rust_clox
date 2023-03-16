@@ -1,6 +1,6 @@
 use std::ptr;
 
-use crate::chunk::Chunk;
+use crate::{chunk::Chunk, value::Value};
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -45,6 +45,14 @@ impl ObjPtr {
         self.0.cast()
     }
 
+    pub fn as_native(&self) -> *mut ObjNative {
+        self.0.cast()
+    }
+
+    pub fn as_native_fn(&self) -> NativeFn {
+        unsafe { (*self.as_native()).function }
+    }
+
     pub fn kind(&self) -> ObjKind {
         // Safety: Obj is valid and alive
         unsafe { (*self.0).kind }
@@ -57,6 +65,7 @@ impl ObjPtr {
 pub enum ObjKind {
     OBJ_STRING,
     OBJ_FUNCTION,
+    OBJ_NATIVE,
 }
 
 #[repr(C)]
@@ -71,6 +80,14 @@ pub struct ObjFunction {
     pub arity: i32,
     pub chunk: Chunk,
     pub name: *mut ObjString,
+}
+
+pub type NativeFn = fn(arg_count: i32, args: *mut Value) -> Value;
+
+#[repr(C)]
+pub struct ObjNative {
+    obj: Obj,
+    pub function: NativeFn,
 }
 
 #[repr(C)]

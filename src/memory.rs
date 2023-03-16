@@ -96,6 +96,9 @@ fn free_object(obj: ObjPtr) {
             unsafe { (*function).chunk.free_chunk() }
             free_memory(function);
         }
+        ObjKind::OBJ_NATIVE => {
+            free_memory(obj.as_native());
+        }
     }
 }
 
