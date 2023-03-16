@@ -32,6 +32,7 @@ pub enum OpCode {
     OP_JUMP,
     OP_JUMP_IF_FALSE,
     OP_LOOP,
+    OP_CALL,
     OP_RETURN,
 }
 
@@ -139,7 +140,7 @@ impl Chunk {
             | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
                 self.simple_instruction(instruction, offset)
             }
-            OP_GET_LOCAL | OP_SET_LOCAL => self.byte_instruction(instruction, offset),
+            OP_GET_LOCAL | OP_SET_LOCAL | OP_CALL => self.byte_instruction(instruction, offset),
             OP_JUMP_IF_FALSE | OP_JUMP => self.jump_instruction(instruction, offset, 1),
             OP_LOOP => self.jump_instruction(instruction, offset, -1),
         }

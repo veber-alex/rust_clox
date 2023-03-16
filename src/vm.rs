@@ -75,11 +75,8 @@ impl VM {
         }
 
         self.push(Value::Obj(ObjPtr::new(function.cast())));
-        unsafe {
-            let frame = CallFrame::new(function, self.stack);
-            *self.frames.add(self.frame_count) = frame;
-            self.frame_count += 1;
-        }
+        self.call(function, 0);
+
         self.run()
     }
 
@@ -105,7 +102,7 @@ impl VM {
     fn run(&mut self) -> InterpretResult {
         use OpCode::*;
 
-        let frame = unsafe { self.frames.add(self.frame_count - 1) };
+        let mut frame = unsafe { self.frames.add(self.frame_count - 1) };
 
         fn read_byte(frame: *mut CallFrame) -> u8 {
             unsafe {
@@ -170,7 +167,18 @@ impl VM {
                     self.push(constant);
                 }
                 OP_RETURN => {
-                    return InterpretResult::Ok;
+                    let result = self.pop();
+                    self.frame_count -= 1;
+                    if self.frame_count == 0 {
+                        self.pop();
+                        return InterpretResult::Ok;
+                    }
+
+                    unsafe {
+                        self.stack_top = (*frame).slots;
+                        self.push(result);
+                        frame = self.frames.add(self.frame_count - 1);
+                    }
                 }
                 OP_NEGATE => {
                     let Value::Number(number) = self.pop() else {
@@ -264,13 +272,55 @@ impl VM {
                     let offset = read_short(frame) as usize;
                     unsafe { (*frame).ip = (*frame).ip.sub(offset) };
                 }
+                OP_CALL => {
+                    let arg_count = read_byte(frame);
+                    if !self.call_value(self.peek(arg_count as isize), arg_count) {
+                        return InterpretResult::RuntimeError;
+                    }
+                    frame = unsafe { self.frames.add(self.frame_count - 1) };
+                }
             }
         }
     }
 
     fn peek(&self, distance: isize) -> Value {
-        // Safety: a valid Value exists at that distance by compiler bytecode construction
         unsafe { *self.stack_top.offset(-1 - distance) }
+    }
+
+    fn call(&mut self, function: *mut ObjFunction, arg_count: u8) -> bool {
+        unsafe {
+            let arity = (*function).arity;
+            if arg_count as i32 != arity {
+                self.runtime_error(&format!(
+                    "Expected {} arguments but got {}.",
+                    arity, arg_count,
+                ));
+                return false;
+            }
+
+            if self.frame_count == FRAMES_MAX {
+                self.runtime_error("Stack overflow.");
+                return false;
+            }
+
+            let frame = self.frames.add(self.frame_count);
+            self.frame_count += 1;
+            (*frame).function = function;
+            (*frame).ip = (*function).chunk.as_code_ptr();
+            (*frame).slots = self.stack_top.sub(arg_count as usize + 1);
+        }
+        true
+    }
+
+    fn call_value(&mut self, value: Value, arg_count: u8) -> bool {
+        if let Value::Obj(obj) = value {
+            match obj.kind() {
+                ObjKind::OBJ_FUNCTION => return self.call(obj.as_function(), arg_count),
+                _ => {}
+            }
+        }
+        self.runtime_error("Can only call functions and classes.");
+        false
     }
 
     fn push(&mut self, value: Value) {
@@ -291,11 +341,19 @@ impl VM {
         eprintln!("{msg}");
 
         unsafe {
-            let frame = self.frames.add(self.frame_count - 1);
-            let instruction =
-                (*frame).ip as usize - (*(*frame).function).chunk.as_code_ptr() as usize - 1;
-            let line = (*(*frame).function).chunk.read_line(instruction);
-            eprintln!("[line {line}] in script");
+            for i in (0..self.frame_count).rev() {
+                let frame = self.frames.add(i);
+                let function = (*frame).function;
+                let instruction =
+                    (*frame).ip as usize - (*function).chunk.as_code_ptr() as usize - 1;
+                let line = (*function).chunk.read_line(instruction);
+                eprint!("[line {line}] in ");
+                if (*function).name.is_null() {
+                    eprintln!("script")
+                } else {
+                    eprintln!("{}", ObjPtr::new((*function).name.cast()).as_string_str())
+                }
+            }
         }
 
         self.reset_stack();

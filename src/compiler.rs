@@ -13,7 +13,7 @@ use Precedence::*;
 
 pub fn compile(vm: &mut VM, source: &str) -> *mut ObjFunction {
     let scanner = Scanner::new(source);
-    let mut compiler = Compiler::new(FunctionKind::TYPE_SCRIPT);
+    let mut compiler = Compiler::new();
     let mut parser = Parser::new(vm, scanner, &mut compiler);
 
     parser.advance();
@@ -63,7 +63,7 @@ struct Local<'a> {
     depth: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 enum FunctionKind {
     TYPE_FUNCTION,
@@ -80,11 +80,11 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(kind: FunctionKind) -> Self {
+    fn new() -> Self {
         Compiler {
             enclosing: ptr::null_mut(),
             function: ptr::null_mut(),
-            kind,
+            kind: FunctionKind::TYPE_SCRIPT,
             locals: [Local {
                 name: Token::dummy(),
                 depth: 0,
@@ -116,15 +116,19 @@ impl<'a> Parser<'a> {
             vm,
             current_compiler: compiler,
         };
-        parser.init_compiler(parser.current_compiler);
+        parser.init_compiler(parser.current_compiler, FunctionKind::TYPE_SCRIPT);
         parser
     }
 
-    fn init_compiler(&mut self, compiler: *mut Compiler<'a>) {
+    fn init_compiler(&mut self, compiler: *mut Compiler<'a>, kind: FunctionKind) {
         unsafe {
             (*compiler).enclosing = self.current_compiler;
-            self.current_compiler = compiler;
             (*compiler).function = self.vm.new_function();
+            self.current_compiler = compiler;
+            if kind != FunctionKind::TYPE_SCRIPT {
+                (*(*self.current_compiler).function).name =
+                    self.vm.copy_string(self.previous.lexeme).as_string();
+            }
 
             let local = &mut (*compiler).locals[0];
             (*compiler).local_count += 1;
@@ -252,6 +256,7 @@ impl<'a> Parser<'a> {
     }
 
     fn emit_return(&mut self) {
+        self.emit_opcode(OP_NIL);
         self.emit_opcode(OP_RETURN)
     }
 
@@ -272,11 +277,26 @@ impl<'a> Parser<'a> {
     }
 
     fn function(&mut self, kind: FunctionKind) {
-        let mut compiler = Compiler::new(kind);
-        self.init_compiler(&mut compiler);
+        let mut compiler = Compiler::new();
+        self.init_compiler(&mut compiler, kind);
         self.begin_scope();
 
         self.consume(T!['('], "Expect '(' after function name.");
+        if !self.check(T![')']) {
+            loop {
+                unsafe {
+                    (*(*self.current_compiler).function).arity += 1;
+                    if (*(*self.current_compiler).function).arity > 255 {
+                        self.error_at_current("Can't have more than 255 parameters.");
+                    }
+                    let constant = self.parse_variable("Expect parameter name.");
+                    self.define_variable(constant);
+                    if !self.matches(T![,]) {
+                        break;
+                    }
+                }
+            }
+        }
         self.consume(T![')'], "Expect ')' after parameters.");
         self.consume(T!['{'], "Expect '{' before function body.");
         self.block();
@@ -384,6 +404,22 @@ impl<'a> Parser<'a> {
         self.emit_opcode(OP_PRINT)
     }
 
+    fn return_statement(&mut self) {
+        unsafe {
+            if (*self.current_compiler).kind == FunctionKind::TYPE_SCRIPT {
+                self.error("Can't return from top-level code.")
+            }
+        }
+
+        if self.matches(T![;]) {
+            self.emit_return()
+        } else {
+            self.expression();
+            self.consume(T![;], "Expect ';' after return value.");
+            self.emit_opcode(OP_RETURN)
+        }
+    }
+
     fn while_statement(&mut self) {
         let loop_start = self.current_chunk().len();
 
@@ -445,6 +481,8 @@ impl<'a> Parser<'a> {
             self.for_statement();
         } else if self.matches(T![if]) {
             self.if_statement();
+        } else if self.matches(T![return]) {
+            self.return_statement()
         } else if self.matches(T![while]) {
             self.while_statement();
         } else if self.matches(T!['{']) {
@@ -584,6 +622,24 @@ impl<'a> Parser<'a> {
         self.emit_bytes(OP_DEFINE_GLOBAL as u8, global)
     }
 
+    fn argument_list(&mut self) -> u8 {
+        let mut arg_count = 0;
+        if !self.check(T![')']) {
+            loop {
+                self.expression();
+                if arg_count == 255 {
+                    self.error("Can't have more than 255 arguments.")
+                }
+                arg_count += 1;
+                if !self.matches(T![,]) {
+                    break;
+                }
+            }
+        }
+        self.consume(T![')'], "Expect ')' after arguments.");
+        arg_count
+    }
+
     fn named_variable(&mut self, token: Token<'_>, can_assign: bool) {
         let mut arg = resolve_local(self.current_compiler, self, token);
         let (get_op, set_op) = if arg != -1 {
@@ -670,7 +726,7 @@ mod jump_table {
             $rules[$kind as usize] = ParseRule { prefix: Some($prefix), infix: None, precedence: $precedence };
         };
         ($rules:expr; $kind:expr => [$prefix:tt, $infix:tt, $precedence:tt]) => {
-            $rules[$kind as usize] = ParseRule { prefix: Some($prefix), infix: Some($infix), precedence: $precedence};
+            $rules[$kind as usize] = ParseRule { prefix: Some($prefix), infix: Some($infix), precedence: $precedence };
         };
     }
 
@@ -688,7 +744,7 @@ mod jump_table {
     // FIXME: Replace this dumb thing with a simple match (check asm)
     pub static RULES: [ParseRule; mem::variant_count::<TokenKind>()] = rules! {
         [T![-],       unary,      binary,   PREC_TERM]
-        [T!['('],     grouping,   None,     PREC_NONE]
+        [T!['('],     grouping,   call,     PREC_CALL]
         [T![number],  number,     None,     PREC_NONE]
         [T![false],   literal,    None,     PREC_NONE]
         [T![true],    literal,    None,     PREC_NONE]
@@ -790,5 +846,10 @@ mod jump_table {
             T![/] => parser.emit_opcode(OP_DIVIDE),
             _ => {}
         }
+    }
+
+    fn call(parser: &mut Parser<'_>, _: bool) {
+        let arg_count = parser.argument_list();
+        parser.emit_bytes(OP_CALL as u8, arg_count);
     }
 }
