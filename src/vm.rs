@@ -1,4 +1,4 @@
-use std::{hint::unreachable_unchecked, ptr, sync::LazyLock, time::Instant};
+use std::{hint::unreachable_unchecked, mem::MaybeUninit, ptr, slice, time::Instant};
 
 use crate::{
     chunk::{Chunk, OpCode},
@@ -23,7 +23,7 @@ macro_rules! binary_op {
 const FRAMES_MAX: usize = 64;
 const STACK_MAX: usize = FRAMES_MAX * U8_COUNT;
 
-static START_INSTANT: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+static mut START_INSTANT: MaybeUninit<Instant> = MaybeUninit::uninit();
 
 #[derive(Clone, Copy)]
 struct CallFrame {
@@ -48,7 +48,8 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        let _ = START_INSTANT.elapsed();
+        // FIXME: This should not be here
+        unsafe { START_INSTANT = MaybeUninit::new(Instant::now()) }
 
         Self {
             frames: ptr::null_mut(),
@@ -91,6 +92,7 @@ impl VM {
         self.frame_count = 0;
         self.frames = allocate_memory(FRAMES_MAX);
 
+        // FIXME: This should not be here
         self.define_native("clock", clock_native);
     }
 
@@ -138,11 +140,9 @@ impl VM {
             #[cfg(feature = "debug_prints")]
             {
                 print!("          ");
-                let mut slot = self.stack;
-                while slot < self.stack_top {
-                    // Safety: slot is in valid range
-                    unsafe { print!("[ {:?} ]", *slot) };
-                    slot = slot.wrapping_add(1);
+                let slice = unsafe { slice::from_ptr_range(self.stack..self.stack_top) };
+                for slot in slice {
+                    print!("[ {} ]", slot)
                 }
                 println!();
                 unsafe {
@@ -215,7 +215,7 @@ impl VM {
                 }
                 OP_GREATER => binary_op!(self, Value::Boolean, >),
                 OP_LESS => binary_op!(self, Value::Boolean, <),
-                OP_PRINT => println!("{:?}", self.pop()),
+                OP_PRINT => println!("{}", self.pop()),
                 OP_POP => {
                     self.pop();
                 }
@@ -286,7 +286,7 @@ impl VM {
     fn call(&mut self, function: *mut ObjFunction, arg_count: u8) -> bool {
         unsafe {
             let arity = (*function).arity;
-            if arg_count as i32 != arity {
+            if arg_count != arity {
                 self.runtime_error(&format!(
                     "Expected {} arguments but got {}.",
                     arity, arg_count,
@@ -488,5 +488,5 @@ pub enum InterpretResult {
 }
 
 fn clock_native(_: i32, _: *mut Value) -> Value {
-    Value::Number(START_INSTANT.elapsed().as_secs_f64())
+    unsafe { Value::Number(START_INSTANT.assume_init().elapsed().as_secs_f64()) }
 }

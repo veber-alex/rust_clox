@@ -18,18 +18,13 @@ impl PartialEq for Value {
             (Number(l0), Number(r0)) => l0 == r0,
             (Boolean(l0), Boolean(r0)) => l0 == r0,
             (Nil, Nil) => true,
-            (Obj(l0), Obj(r0)) => match (l0.kind(), r0.kind()) {
-                (OBJ_STRING, OBJ_STRING) => l0.as_string() == r0.as_string(),
-                (OBJ_FUNCTION, OBJ_FUNCTION) => todo!(),
-                _ => false,
-            },
+            (Obj(l0), Obj(r0)) => l0.as_ptr() == r0.as_ptr(),
             _ => false,
         }
     }
 }
 
-// FIXME: This should use Display as it will be user facing.
-impl std::fmt::Debug for Value {
+impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
             Nil => write!(f, "Nil"),

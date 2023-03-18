@@ -10,3 +10,11 @@ rustyline = { version = "11.0.0", default-features = false }
 
 [features]
 debug_prints = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "fat"

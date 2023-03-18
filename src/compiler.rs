@@ -286,10 +286,10 @@ impl<'a> Parser<'a> {
         if !self.check(T![')']) {
             loop {
                 unsafe {
-                    (*(*self.current_compiler).function).arity += 1;
-                    if (*(*self.current_compiler).function).arity > 255 {
+                    if (*(*self.current_compiler).function).arity == 255 {
                         self.error_at_current("Can't have more than 255 parameters.");
                     }
+                    (*(*self.current_compiler).function).arity += 1;
                     let constant = self.parse_variable("Expect parameter name.");
                     self.define_variable(constant);
                     if !self.matches(T![,]) {

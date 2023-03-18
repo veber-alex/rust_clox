@@ -77,7 +77,7 @@ pub struct Obj {
 #[repr(C)]
 pub struct ObjFunction {
     obj: Obj,
-    pub arity: i32,
+    pub arity: u8,
     pub chunk: Chunk,
     pub name: *mut ObjString,
 }

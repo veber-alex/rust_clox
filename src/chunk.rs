@@ -165,7 +165,7 @@ impl Chunk {
     fn constant_instruction(&self, op_code: OpCode, offset: usize) -> usize {
         let constant_index = unsafe { *self.code.add(offset + 1) };
         print!("{op_code:16?} {constant_index:4} ");
-        println!("'{:?}'", self.constants.get(constant_index as usize));
+        println!("'{}'", self.constants.get(constant_index as usize));
         offset + 2
     }
 
