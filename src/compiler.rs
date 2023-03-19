@@ -61,6 +61,7 @@ pub struct ParseRule {
 struct Local<'a> {
     name: Token<'a>,
     depth: i32,
+    is_captured: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -95,6 +96,7 @@ impl<'a> Compiler<'a> {
             locals: [Local {
                 name: Token::dummy(),
                 depth: 0,
+                is_captured: false,
             }; U8_COUNT],
             local_count: 0,
             upvalues: [UpValue {
@@ -113,7 +115,7 @@ pub struct Parser<'a> {
     had_error: Cell<bool>,
     panic_mode: Cell<bool>,
     vm: &'a mut VM,
-    current_compiler: *mut Compiler<'a>,
+    compiler: *mut Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
@@ -125,21 +127,20 @@ impl<'a> Parser<'a> {
             had_error: Cell::new(false),
             panic_mode: Cell::new(false),
             vm,
-            current_compiler: ptr::null_mut(),
+            compiler: ptr::null_mut(),
         };
         parser.init_compiler(compiler, FunctionKind::TYPE_SCRIPT);
-        parser.current_compiler = compiler;
         parser
     }
 
     fn init_compiler(&mut self, compiler: *mut Compiler<'a>, kind: FunctionKind) {
         unsafe {
-            (*compiler).enclosing = self.current_compiler;
+            (*compiler).enclosing = self.compiler;
             (*compiler).function = self.vm.new_function();
             (*compiler).kind = kind;
-            self.current_compiler = compiler;
+            self.compiler = compiler;
             if kind != FunctionKind::TYPE_SCRIPT {
-                (*(*self.current_compiler).function).name =
+                (*(*self.compiler).function).name =
                     self.vm.copy_string(self.previous.lexeme).as_string();
             }
 
@@ -147,6 +148,7 @@ impl<'a> Parser<'a> {
             (*compiler).local_count += 1;
             local.name.lexeme = "";
             local.depth = 0;
+            local.is_captured = false;
         }
     }
 
@@ -248,7 +250,7 @@ impl<'a> Parser<'a> {
 
     fn end_compiler(&mut self) -> *mut ObjFunction {
         self.emit_return();
-        let function = unsafe { (*self.current_compiler).function };
+        let function = unsafe { (*self.compiler).function };
 
         #[cfg(feature = "debug_prints")]
         {
@@ -264,7 +266,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.current_compiler = unsafe { (*self.current_compiler).enclosing };
+        self.compiler = unsafe { (*self.compiler).enclosing };
         function
     }
 
@@ -274,7 +276,7 @@ impl<'a> Parser<'a> {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        unsafe { &mut (*(*self.current_compiler).function).chunk }
+        unsafe { &mut (*(*self.compiler).function).chunk }
     }
 
     fn expression(&mut self) {
@@ -298,10 +300,10 @@ impl<'a> Parser<'a> {
         if !self.check(T![')']) {
             loop {
                 unsafe {
-                    if (*(*self.current_compiler).function).arity == 255 {
+                    if (*(*self.compiler).function).arity == 255 {
                         self.error_at_current("Can't have more than 255 parameters.");
                     }
-                    (*(*self.current_compiler).function).arity += 1;
+                    (*(*self.compiler).function).arity += 1;
                     let constant = self.parse_variable("Expect parameter name.");
                     self.define_variable(constant);
                     if !self.matches(T![,]) {
@@ -426,7 +428,7 @@ impl<'a> Parser<'a> {
 
     fn return_statement(&mut self) {
         unsafe {
-            if (*self.current_compiler).kind == FunctionKind::TYPE_SCRIPT {
+            if (*self.compiler).kind == FunctionKind::TYPE_SCRIPT {
                 self.error("Can't return from top-level code.")
             }
         }
@@ -550,50 +552,58 @@ impl<'a> Parser<'a> {
 
     fn begin_scope(&mut self) {
         unsafe {
-            (*self.current_compiler).scope_depth += 1;
+            (*self.compiler).scope_depth += 1;
         }
     }
 
     fn end_scope(&mut self) {
         unsafe {
-            (*self.current_compiler).scope_depth -= 1;
+            (*self.compiler).scope_depth -= 1;
 
-            while (*self.current_compiler).local_count > 0
-                && (*self.current_compiler).locals[(*self.current_compiler).local_count - 1].depth
-                    > (*self.current_compiler).scope_depth
+            while (*self.compiler).local_count > 0
+                && (*self.compiler).locals[(*self.compiler).local_count - 1].depth
+                    > (*self.compiler).scope_depth
             {
                 // FIXME: Add a special POP_POPN to pop multiple values from the stack at once
-                self.emit_opcode(OP_POP);
-                (*self.current_compiler).local_count -= 1;
+                if (*self.compiler).locals[(*self.compiler).local_count - 1].is_captured {
+                    self.emit_opcode(OP_CLOSE_UPVALUE);
+                } else {
+                    self.emit_opcode(OP_POP);
+                }
+                (*self.compiler).local_count -= 1;
             }
         }
     }
 
     fn add_local(&mut self, name: Token<'a>) {
         unsafe {
-            let Some(local) = (*self.current_compiler).locals.get_mut((*self.current_compiler).local_count) else {
+            let Some(local) = (*self.compiler).locals.get_mut((*self.compiler).local_count) else {
                 self.error("Too many local variables in function.");
                 return
             };
 
-            *local = Local { name, depth: -1 };
+            *local = Local {
+                name,
+                depth: -1,
+                is_captured: false,
+            };
 
-            (*self.current_compiler).local_count += 1;
+            (*self.compiler).local_count += 1;
         }
     }
 
     fn declare_variable(&mut self) {
         unsafe {
-            if (*self.current_compiler).scope_depth == 0 {
+            if (*self.compiler).scope_depth == 0 {
                 return;
             }
 
             let name = self.previous;
-            for local in (*self.current_compiler).locals[..(*self.current_compiler).local_count]
+            for local in (*self.compiler).locals[..(*self.compiler).local_count]
                 .iter()
                 .rev()
             {
-                if local.depth != -1 && local.depth < (*self.current_compiler).scope_depth {
+                if local.depth != -1 && local.depth < (*self.compiler).scope_depth {
                     break;
                 }
 
@@ -613,7 +623,7 @@ impl<'a> Parser<'a> {
 
         self.declare_variable();
         unsafe {
-            if (*self.current_compiler).scope_depth > 0 {
+            if (*self.compiler).scope_depth > 0 {
                 return 0;
             }
         }
@@ -623,17 +633,17 @@ impl<'a> Parser<'a> {
 
     fn mark_initialized(&mut self) {
         unsafe {
-            if (*self.current_compiler).scope_depth == 0 {
+            if (*self.compiler).scope_depth == 0 {
                 return;
             }
-            (*self.current_compiler).locals[(*self.current_compiler).local_count - 1].depth =
-                (*self.current_compiler).scope_depth;
+            (*self.compiler).locals[(*self.compiler).local_count - 1].depth =
+                (*self.compiler).scope_depth;
         }
     }
 
     fn define_variable(&mut self, global: u8) {
         unsafe {
-            if (*self.current_compiler).scope_depth > 0 {
+            if (*self.compiler).scope_depth > 0 {
                 self.mark_initialized();
                 return;
             }
@@ -661,11 +671,11 @@ impl<'a> Parser<'a> {
     }
 
     fn named_variable(&mut self, name: Token<'_>, can_assign: bool) {
-        let mut arg = self.resolve_local(self.current_compiler, name);
+        let mut arg = self.resolve_local(self.compiler, name);
         let (get_op, set_op) = if arg != -1 {
             (OP_GET_LOCAL, OP_SET_LOCAL)
         } else {
-            let upvalue = self.resolve_upvalue(self.current_compiler, name);
+            let upvalue = self.resolve_upvalue(self.compiler, name);
             if upvalue != -1 {
                 arg = upvalue;
                 (OP_GET_UPVALUE, OP_SET_UPVALUE)
@@ -736,6 +746,7 @@ impl<'a> Parser<'a> {
 
             let local = self.resolve_local((*compiler).enclosing, name);
             if local != -1 {
+                (*(*compiler).enclosing).locals[local as usize].is_captured = true;
                 return self.add_upvalue(compiler, local as u8, true);
             }
 

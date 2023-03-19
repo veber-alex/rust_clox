@@ -36,6 +36,7 @@ pub enum OpCode {
     OP_LOOP,
     OP_CALL,
     OP_CLOSURE,
+    OP_CLOSE_UPVALUE,
     OP_RETURN,
 }
 
@@ -140,9 +141,8 @@ impl Chunk {
                 self.constant_instruction(instruction, offset)
             }
             OP_RETURN | OP_NEGATE | OP_ADD | OP_SUBSTRACT | OP_MULTIPLY | OP_DIVIDE | OP_NIL
-            | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
-                self.simple_instruction(instruction, offset)
-            }
+            | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP
+            | OP_CLOSE_UPVALUE => self.simple_instruction(instruction, offset),
             OP_GET_LOCAL | OP_SET_LOCAL | OP_CALL | OP_GET_UPVALUE | OP_SET_UPVALUE => {
                 self.byte_instruction(instruction, offset)
             }

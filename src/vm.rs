@@ -47,6 +47,7 @@ pub struct VM {
     strings: Table,
     globals: Table,
     pub objects: ObjPtr,
+    open_upvalues: *mut ObjUpvalue,
 }
 
 impl VM {
@@ -62,6 +63,7 @@ impl VM {
             strings: Table::new(),
             globals: Table::new(),
             objects: ObjPtr::null(),
+            open_upvalues: ptr::null_mut(),
         }
     }
 
@@ -97,6 +99,8 @@ impl VM {
         free_array_memory(self.frames, FRAMES_MAX);
         self.frame_count = 0;
         self.frames = allocate_memory(FRAMES_MAX);
+
+        self.open_upvalues = ptr::null_mut();
 
         // FIXME: This should not be here
         self.define_native("clock", clock_native);
@@ -182,6 +186,7 @@ impl VM {
                 }
                 OP_RETURN => {
                     let result = self.pop();
+                    unsafe { self.close_upvalues((*frame).slots) };
                     self.frame_count -= 1;
                     if self.frame_count == 0 {
                         self.pop();
@@ -318,6 +323,10 @@ impl VM {
                     *(*(*(*(*frame).closure).upvalues.add(slot))).location =
                         self.peek(slot as isize);
                 },
+                OP_CLOSE_UPVALUE => unsafe {
+                    self.close_upvalues(self.stack_top.sub(1));
+                    self.pop();
+                },
             }
         }
     }
@@ -370,8 +379,40 @@ impl VM {
     }
 
     fn capture_upvalue(&mut self, local: *mut Value) -> *mut ObjUpvalue {
-        let created_upvalue = self.new_upvalue(local);
-        created_upvalue
+        unsafe {
+            let mut prev_upvalue = ptr::null_mut();
+            let mut upvalue = self.open_upvalues;
+            while !upvalue.is_null() && (*upvalue).location > local {
+                prev_upvalue = upvalue;
+                upvalue = (*upvalue).next;
+            }
+
+            if !upvalue.is_null() && (*upvalue).location == local {
+                return upvalue;
+            }
+
+            let created_upvalue = self.new_upvalue(local);
+            (*created_upvalue).next = upvalue;
+
+            if prev_upvalue.is_null() {
+                self.open_upvalues = created_upvalue;
+            } else {
+                (*prev_upvalue).next = created_upvalue;
+            }
+
+            created_upvalue
+        }
+    }
+
+    fn close_upvalues(&mut self, last: *mut Value) {
+        unsafe {
+            while !self.open_upvalues.is_null() && (*self.open_upvalues).location >= last {
+                let upvalue = self.open_upvalues;
+                (*upvalue).closed = *(*upvalue).location;
+                (*upvalue).location = ptr::addr_of_mut!((*upvalue).closed);
+                self.open_upvalues = (*upvalue).next;
+            }
+        }
     }
 
     fn push(&mut self, value: Value) {
@@ -548,7 +589,11 @@ impl VM {
     pub fn new_upvalue(&mut self, slot: *mut Value) -> *mut ObjUpvalue {
         let upvalue = self.allocate_object::<ObjUpvalue>(ObjKind::OBJ_UPVALUE);
 
-        unsafe { (*upvalue).location = slot };
+        unsafe {
+            (*upvalue).location = slot;
+            (*upvalue).closed = Value::Nil;
+            (*upvalue).next = ptr::null_mut()
+        };
 
         upvalue
     }

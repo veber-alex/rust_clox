@@ -121,6 +121,8 @@ pub struct ObjClosure {
 pub struct ObjUpvalue {
     obj: Obj,
     pub location: *mut Value,
+    pub closed: Value,
+    pub next: *mut ObjUpvalue,
 }
 
 pub fn hash_string(ptr: *const u8, len: usize) -> u32 {
