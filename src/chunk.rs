@@ -204,7 +204,7 @@ impl Chunk {
 
     fn byte_instruction(&self, op_code: OpCode, offset: usize) -> usize {
         let slot = unsafe { *self.code.add(offset + 1) };
-        print!("{op_code:16?} {slot:4} ");
+        println!("{op_code:16?} {slot:4} ");
         offset + 2
     }
 }

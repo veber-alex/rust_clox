@@ -37,6 +37,7 @@ impl fmt::Display for Value {
                 OBJ_FUNCTION => print_function(obj.as_function(), f),
                 OBJ_CLOSURE => unsafe { print_function((*obj.as_closure()).function, f) },
                 OBJ_NATIVE => write!(f, "<native fn>"),
+                OBJ_UPVALUE => write!(f, "upvalue"),
             },
         }
     }

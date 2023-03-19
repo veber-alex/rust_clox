@@ -53,6 +53,10 @@ impl ObjPtr {
         self.0.cast()
     }
 
+    pub fn as_upvalue(&self) -> *mut ObjUpvalue {
+        self.0.cast()
+    }
+
     pub fn as_native_fn(&self) -> NativeFn {
         unsafe { (*self.as_native()).function }
     }
@@ -68,6 +72,7 @@ impl ObjPtr {
 #[allow(non_camel_case_types)]
 pub enum ObjKind {
     OBJ_STRING,
+    OBJ_UPVALUE,
     OBJ_FUNCTION,
     OBJ_CLOSURE,
     OBJ_NATIVE,
@@ -108,6 +113,14 @@ pub struct ObjString {
 pub struct ObjClosure {
     obj: Obj,
     pub function: *mut ObjFunction,
+    pub upvalues: *mut *mut ObjUpvalue,
+    pub upvalue_count: i32,
+}
+
+#[repr(C)]
+pub struct ObjUpvalue {
+    obj: Obj,
+    pub location: *mut Value,
 }
 
 pub fn hash_string(ptr: *const u8, len: usize) -> u32 {

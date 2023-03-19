@@ -97,7 +97,12 @@ fn free_object(obj: ObjPtr) {
             free_memory(function);
         }
         ObjKind::OBJ_NATIVE => free_memory(obj.as_native()),
-        ObjKind::OBJ_CLOSURE => free_memory(obj.as_closure()),
+        ObjKind::OBJ_CLOSURE => {
+            let closure = obj.as_closure();
+            unsafe { free_array_memory((*closure).upvalues, (*closure).upvalue_count as usize) };
+            free_memory(obj.as_closure())
+        }
+        ObjKind::OBJ_UPVALUE => free_memory(obj.as_upvalue()),
     }
 }
 

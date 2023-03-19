@@ -6,6 +6,7 @@ use crate::{
     memory::{allocate_memory, free_array_memory, free_objects},
     object::{
         hash_string, NativeFn, Obj, ObjClosure, ObjFunction, ObjKind, ObjNative, ObjPtr, ObjString,
+        ObjUpvalue,
     },
     table::{free_table, table_delete, table_find_string, table_get, table_set, Table},
     value::Value,
@@ -295,10 +296,28 @@ impl VM {
                 OP_CLOSURE => {
                     let function = read_function(frame);
                     let closure = self.new_closure(function);
-                    self.push(Value::Obj(ObjPtr::new(closure.cast())))
+                    self.push(Value::Obj(ObjPtr::new(closure.cast())));
+                    unsafe {
+                        for i in 0..(*closure).upvalue_count as usize {
+                            let is_local = read_byte(frame) == 1;
+                            let index = read_byte(frame) as usize;
+                            *(*closure).upvalues.add(i) = if is_local {
+                                self.capture_upvalue((*frame).slots.add(index))
+                            } else {
+                                *(*(*frame).closure).upvalues.add(index)
+                            };
+                        }
+                    }
                 }
-                OP_GET_UPVALUE => todo!(),
-                OP_SET_UPVALUE => todo!(),
+                OP_GET_UPVALUE => unsafe {
+                    let slot = read_byte(frame) as usize;
+                    self.push(*(*(*(*(*frame).closure).upvalues.add(slot))).location)
+                },
+                OP_SET_UPVALUE => unsafe {
+                    let slot = read_byte(frame) as usize;
+                    *(*(*(*(*frame).closure).upvalues.add(slot))).location =
+                        self.peek(slot as isize);
+                },
             }
         }
     }
@@ -348,6 +367,11 @@ impl VM {
         }
         self.runtime_error("Can only call functions and classes.");
         false
+    }
+
+    fn capture_upvalue(&mut self, local: *mut Value) -> *mut ObjUpvalue {
+        let created_upvalue = self.new_upvalue(local);
+        created_upvalue
     }
 
     fn push(&mut self, value: Value) {
@@ -505,11 +529,28 @@ impl VM {
     }
 
     pub fn new_closure(&mut self, function: *mut ObjFunction) -> *mut ObjClosure {
-        let closure = self.allocate_object::<ObjClosure>(ObjKind::OBJ_CLOSURE);
+        unsafe {
+            let upvalue_count = (*function).upvalue_count as usize;
+            let upvalues = allocate_memory::<*mut ObjUpvalue>(upvalue_count);
+            for i in 0..upvalue_count {
+                *upvalues.add(i) = ptr::null_mut();
+            }
 
-        unsafe { (*closure).function = function };
+            let closure = self.allocate_object::<ObjClosure>(ObjKind::OBJ_CLOSURE);
+            (*closure).function = function;
+            (*closure).upvalues = upvalues;
+            (*closure).upvalue_count = upvalue_count as i32;
 
-        closure
+            closure
+        }
+    }
+
+    pub fn new_upvalue(&mut self, slot: *mut Value) -> *mut ObjUpvalue {
+        let upvalue = self.allocate_object::<ObjUpvalue>(ObjKind::OBJ_UPVALUE);
+
+        unsafe { (*upvalue).location = slot };
+
+        upvalue
     }
 }
 

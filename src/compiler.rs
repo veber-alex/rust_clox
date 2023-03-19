@@ -125,9 +125,10 @@ impl<'a> Parser<'a> {
             had_error: Cell::new(false),
             panic_mode: Cell::new(false),
             vm,
-            current_compiler: compiler,
+            current_compiler: ptr::null_mut(),
         };
-        parser.init_compiler(parser.current_compiler, FunctionKind::TYPE_SCRIPT);
+        parser.init_compiler(compiler, FunctionKind::TYPE_SCRIPT);
+        parser.current_compiler = compiler;
         parser
     }
 
