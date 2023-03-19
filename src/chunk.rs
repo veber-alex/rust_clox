@@ -33,6 +33,7 @@ pub enum OpCode {
     OP_JUMP_IF_FALSE,
     OP_LOOP,
     OP_CALL,
+    OP_CLOSURE,
     OP_RETURN,
 }
 
@@ -119,7 +120,7 @@ impl Chunk {
         }
     }
 
-    pub fn disassemble_instruction(&self, offset: usize) -> usize {
+    pub fn disassemble_instruction(&self, mut offset: usize) -> usize {
         use OpCode::*;
 
         print!("{offset:04} ");
@@ -143,6 +144,14 @@ impl Chunk {
             OP_GET_LOCAL | OP_SET_LOCAL | OP_CALL => self.byte_instruction(instruction, offset),
             OP_JUMP_IF_FALSE | OP_JUMP => self.jump_instruction(instruction, offset, 1),
             OP_LOOP => self.jump_instruction(instruction, offset, -1),
+            OP_CLOSURE => {
+                offset += 1;
+                let constant_index = unsafe { *self.code.add(offset) };
+                offset += 1;
+                print!("{instruction:16?} {constant_index:4} ");
+                println!("'{}'", self.constants.get(constant_index as usize));
+                offset
+            }
         }
     }
 

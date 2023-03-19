@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
 
         let function = self.end_compiler();
         let constant = self.make_constant(Value::Obj(ObjPtr::new(function.cast())));
-        self.emit_bytes(OP_CONSTANT as u8, constant)
+        self.emit_bytes(OP_CLOSURE as u8, constant)
     }
 
     fn fun_declaration(&mut self) {

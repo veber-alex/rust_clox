@@ -49,6 +49,10 @@ impl ObjPtr {
         self.0.cast()
     }
 
+    pub fn as_closure(&self) -> *mut ObjClosure {
+        self.0.cast()
+    }
+
     pub fn as_native_fn(&self) -> NativeFn {
         unsafe { (*self.as_native()).function }
     }
@@ -65,6 +69,7 @@ impl ObjPtr {
 pub enum ObjKind {
     OBJ_STRING,
     OBJ_FUNCTION,
+    OBJ_CLOSURE,
     OBJ_NATIVE,
 }
 
@@ -96,6 +101,12 @@ pub struct ObjString {
     pub ptr: *mut u8,
     pub len: usize,
     pub hash: u32,
+}
+
+#[repr(C)]
+pub struct ObjClosure {
+    obj: Obj,
+    pub function: *mut ObjFunction,
 }
 
 pub fn hash_string(ptr: *const u8, len: usize) -> u32 {

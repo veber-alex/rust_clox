@@ -4,7 +4,9 @@ use crate::{
     chunk::{Chunk, OpCode},
     compiler::{compile, U8_COUNT},
     memory::{allocate_memory, free_array_memory, free_objects},
-    object::{hash_string, NativeFn, Obj, ObjFunction, ObjKind, ObjNative, ObjPtr, ObjString},
+    object::{
+        hash_string, NativeFn, Obj, ObjClosure, ObjFunction, ObjKind, ObjNative, ObjPtr, ObjString,
+    },
     table::{free_table, table_delete, table_find_string, table_get, table_set, Table},
     value::Value,
 };
@@ -27,7 +29,7 @@ static mut START_INSTANT: MaybeUninit<Instant> = MaybeUninit::uninit();
 
 #[derive(Clone, Copy)]
 struct CallFrame {
-    function: *mut ObjFunction,
+    closure: *mut ObjClosure,
 
     // Instruction pointer into the functions Chunk
     ip: *mut u8,
@@ -70,7 +72,10 @@ impl VM {
         }
 
         self.push(Value::Obj(ObjPtr::new(function.cast())));
-        self.call(function, 0);
+        let closure = self.new_closure(function);
+        self.pop();
+        self.push(Value::Obj(ObjPtr::new(closure.cast())));
+        self.call(closure, 0);
 
         self.run()
     }
@@ -120,7 +125,7 @@ impl VM {
 
         fn read_constant(frame: *mut CallFrame) -> Value {
             unsafe {
-                (*(*frame).function)
+                (*(*(*frame).closure).function)
                     .chunk
                     .constants
                     .get(read_byte(frame) as usize)
@@ -136,6 +141,15 @@ impl VM {
             }
         }
 
+        fn read_function(frame: *mut CallFrame) -> *mut ObjFunction {
+            unsafe {
+                let Value::Obj(obj) = read_constant(frame) else {
+                unreachable_unchecked()
+            };
+                obj.as_function()
+            }
+        }
+
         loop {
             #[cfg(feature = "debug_prints")]
             {
@@ -146,9 +160,12 @@ impl VM {
                 }
                 println!();
                 unsafe {
-                    (*(*frame).function).chunk.disassemble_instruction(
-                        (*frame).ip as usize - (*(*frame).function).chunk.as_code_ptr() as usize,
-                    );
+                    (*(*(*frame).closure).function)
+                        .chunk
+                        .disassemble_instruction(
+                            (*frame).ip as usize
+                                - (*(*(*frame).closure).function).chunk.as_code_ptr() as usize,
+                        );
                 }
             }
 
@@ -275,6 +292,11 @@ impl VM {
                     }
                     frame = unsafe { self.frames.add(self.frame_count - 1) };
                 }
+                OP_CLOSURE => {
+                    let function = read_function(frame);
+                    let closure = self.new_closure(function);
+                    self.push(Value::Obj(ObjPtr::new(closure.cast())))
+                }
             }
         }
     }
@@ -283,9 +305,9 @@ impl VM {
         unsafe { *self.stack_top.offset(-1 - distance) }
     }
 
-    fn call(&mut self, function: *mut ObjFunction, arg_count: u8) -> bool {
+    fn call(&mut self, closure: *mut ObjClosure, arg_count: u8) -> bool {
         unsafe {
-            let arity = (*function).arity;
+            let arity = (*(*closure).function).arity;
             if arg_count != arity {
                 self.runtime_error(&format!(
                     "Expected {} arguments but got {}.",
@@ -301,8 +323,8 @@ impl VM {
 
             let frame = self.frames.add(self.frame_count);
             self.frame_count += 1;
-            (*frame).function = function;
-            (*frame).ip = (*function).chunk.as_code_ptr();
+            (*frame).closure = closure;
+            (*frame).ip = (*(*closure).function).chunk.as_code_ptr();
             (*frame).slots = self.stack_top.sub(arg_count as usize + 1);
         }
         true
@@ -311,7 +333,7 @@ impl VM {
     fn call_value(&mut self, value: Value, arg_count: u8) -> bool {
         if let Value::Obj(obj) = value {
             match obj.kind() {
-                ObjKind::OBJ_FUNCTION => return self.call(obj.as_function(), arg_count),
+                ObjKind::OBJ_CLOSURE => return self.call(obj.as_closure(), arg_count),
                 ObjKind::OBJ_NATIVE => unsafe {
                     let native = obj.as_native_fn();
                     let result = native(arg_count as i32, self.stack_top.sub(arg_count as usize));
@@ -346,7 +368,7 @@ impl VM {
         unsafe {
             for i in (0..self.frame_count).rev() {
                 let frame = self.frames.add(i);
-                let function = (*frame).function;
+                let function = (*(*frame).closure).function;
                 let instruction =
                     (*frame).ip as usize - (*function).chunk.as_code_ptr() as usize - 1;
                 let line = (*function).chunk.read_line(instruction);
@@ -477,6 +499,14 @@ impl VM {
         unsafe { (*native).function = function }
 
         native
+    }
+
+    pub fn new_closure(&mut self, function: *mut ObjFunction) -> *mut ObjClosure {
+        let closure = self.allocate_object::<ObjClosure>(ObjKind::OBJ_CLOSURE);
+
+        unsafe { (*closure).function = function };
+
+        closure
     }
 }
 
