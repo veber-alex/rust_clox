@@ -297,6 +297,8 @@ impl VM {
                     let closure = self.new_closure(function);
                     self.push(Value::Obj(ObjPtr::new(closure.cast())))
                 }
+                OP_GET_UPVALUE => todo!(),
+                OP_SET_UPVALUE => todo!(),
             }
         }
     }
@@ -486,6 +488,7 @@ impl VM {
 
         unsafe {
             (*function).arity = 0;
+            (*function).upvalue_count = 0;
             (*function).name = ptr::null_mut();
             (*function).chunk = Chunk::new();
         }

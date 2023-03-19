@@ -83,6 +83,7 @@ pub struct Obj {
 pub struct ObjFunction {
     obj: Obj,
     pub arity: u8,
+    pub upvalue_count: i32,
     pub chunk: Chunk,
     pub name: *mut ObjString,
 }

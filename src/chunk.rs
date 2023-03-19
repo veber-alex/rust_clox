@@ -19,6 +19,8 @@ pub enum OpCode {
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
     OP_GET_GLOBAL,
+    OP_GET_UPVALUE,
+    OP_SET_UPVALUE,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -141,7 +143,9 @@ impl Chunk {
             | OP_TRUE | OP_FALSE | OP_NOT | OP_EQUAL | OP_GREATER | OP_LESS | OP_PRINT | OP_POP => {
                 self.simple_instruction(instruction, offset)
             }
-            OP_GET_LOCAL | OP_SET_LOCAL | OP_CALL => self.byte_instruction(instruction, offset),
+            OP_GET_LOCAL | OP_SET_LOCAL | OP_CALL | OP_GET_UPVALUE | OP_SET_UPVALUE => {
+                self.byte_instruction(instruction, offset)
+            }
             OP_JUMP_IF_FALSE | OP_JUMP => self.jump_instruction(instruction, offset, 1),
             OP_LOOP => self.jump_instruction(instruction, offset, -1),
             OP_CLOSURE => {
@@ -150,6 +154,26 @@ impl Chunk {
                 offset += 1;
                 print!("{instruction:16?} {constant_index:4} ");
                 println!("'{}'", self.constants.get(constant_index as usize));
+                let Value::Obj(obj) = self.constants.get(constant_index as usize) else { unreachable!() };
+                let function = obj.as_function();
+                unsafe {
+                    for _ in 0..(*function).upvalue_count {
+                        let is_local = if *self.code.add(offset) == 1 {
+                            "local"
+                        } else {
+                            "upvalue"
+                        };
+                        offset += 1;
+                        let index = *self.code.add(offset);
+                        offset += 1;
+                        println!(
+                            "{:04}      |                     {} {}",
+                            offset - 2,
+                            is_local,
+                            index
+                        )
+                    }
+                }
                 offset
             }
         }

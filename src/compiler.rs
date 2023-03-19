@@ -63,6 +63,12 @@ struct Local<'a> {
     depth: i32,
 }
 
+#[derive(Clone, Copy)]
+struct UpValue {
+    index: u8,
+    is_local: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 enum FunctionKind {
@@ -76,6 +82,7 @@ struct Compiler<'a> {
     kind: FunctionKind,
     locals: [Local<'a>; U8_COUNT],
     local_count: usize,
+    upvalues: [UpValue; U8_COUNT],
     scope_depth: i32,
 }
 
@@ -90,6 +97,10 @@ impl<'a> Compiler<'a> {
                 depth: 0,
             }; U8_COUNT],
             local_count: 0,
+            upvalues: [UpValue {
+                index: 0,
+                is_local: false,
+            }; U8_COUNT],
             scope_depth: 0,
         }
     }
@@ -304,7 +315,14 @@ impl<'a> Parser<'a> {
 
         let function = self.end_compiler();
         let constant = self.make_constant(Value::Obj(ObjPtr::new(function.cast())));
-        self.emit_bytes(OP_CLOSURE as u8, constant)
+        self.emit_bytes(OP_CLOSURE as u8, constant);
+
+        unsafe {
+            for upvalue in &compiler.upvalues[..(*function).upvalue_count as usize] {
+                self.emit_byte(upvalue.is_local as u8);
+                self.emit_byte(upvalue.index);
+            }
+        }
     }
 
     fn fun_declaration(&mut self) {
@@ -641,13 +659,19 @@ impl<'a> Parser<'a> {
         arg_count
     }
 
-    fn named_variable(&mut self, token: Token<'_>, can_assign: bool) {
-        let mut arg = resolve_local(self.current_compiler, self, token);
+    fn named_variable(&mut self, name: Token<'_>, can_assign: bool) {
+        let mut arg = self.resolve_local(self.current_compiler, name);
         let (get_op, set_op) = if arg != -1 {
             (OP_GET_LOCAL, OP_SET_LOCAL)
         } else {
-            arg = self.identifier_constant(token) as i32;
-            (OP_GET_GLOBAL, OP_SET_GLOBAL)
+            let upvalue = self.resolve_upvalue(self.current_compiler, name);
+            if upvalue != -1 {
+                arg = upvalue;
+                (OP_GET_UPVALUE, OP_SET_UPVALUE)
+            } else {
+                arg = self.identifier_constant(name) as i32;
+                (OP_GET_GLOBAL, OP_SET_GLOBAL)
+            }
         };
 
         if can_assign && self.matches(T![=]) {
@@ -657,23 +681,69 @@ impl<'a> Parser<'a> {
             self.emit_bytes(get_op as u8, arg as u8);
         }
     }
-}
 
-// FIXME: This should return Option<u8>
-fn resolve_local(compiler: *mut Compiler<'_>, parser: &Parser<'_>, name: Token<'_>) -> i32 {
-    unsafe {
-        match (*compiler).locals[..(*compiler).local_count]
-            .iter()
-            .zip(0..(*compiler).local_count as i32)
-            .rev()
-            .find(|(local, _)| name.lexeme == local.name.lexeme)
-        {
-            Some((Local { depth: -1, .. }, i)) => {
-                parser.error("Can't read local variable in its own initializer.");
-                i
+    // FIXME: This should return Option<u8> ?
+    fn resolve_local(&mut self, compiler: *mut Compiler<'_>, name: Token<'_>) -> i32 {
+        unsafe {
+            match (*compiler).locals[..(*compiler).local_count]
+                .iter()
+                .zip(0..(*compiler).local_count as i32)
+                .rev()
+                .find(|(local, _)| name.lexeme == local.name.lexeme)
+            {
+                Some((Local { depth: -1, .. }, i)) => {
+                    self.error("Can't read local variable in its own initializer.");
+                    i
+                }
+                Some((_, i)) => i,
+                None => -1,
             }
-            Some((_, i)) => i,
-            None => -1,
+        }
+    }
+
+    fn add_upvalue(&mut self, compiler: *mut Compiler<'_>, index: u8, is_local: bool) -> i32 {
+        unsafe {
+            let upvalue_count = (*(*compiler).function).upvalue_count as usize;
+
+            if let Some((index, _)) = (*compiler).upvalues[..upvalue_count]
+                .iter()
+                .enumerate()
+                .find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local)
+            {
+                return index as i32;
+            }
+
+            if upvalue_count == U8_COUNT {
+                self.error("Too many closure variables in function.");
+                return 0;
+            }
+
+            (*compiler).upvalues[upvalue_count].is_local = is_local;
+            (*compiler).upvalues[upvalue_count].index = index;
+            (*(*compiler).function).upvalue_count += 1;
+
+            upvalue_count as i32
+        }
+    }
+
+    // FIXME: This should return Option<u8> ?
+    fn resolve_upvalue(&mut self, compiler: *mut Compiler<'_>, name: Token<'_>) -> i32 {
+        unsafe {
+            if (*compiler).enclosing.is_null() {
+                return -1;
+            }
+
+            let local = self.resolve_local((*compiler).enclosing, name);
+            if local != -1 {
+                return self.add_upvalue(compiler, local as u8, true);
+            }
+
+            let upvalue = self.resolve_upvalue((*compiler).enclosing, name);
+            if upvalue != -1 {
+                return self.add_upvalue(compiler, upvalue as u8, false);
+            }
+
+            -1
         }
     }
 }
