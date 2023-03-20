@@ -1,4 +1,9 @@
-use std::{hint::unreachable_unchecked, mem::MaybeUninit, ptr, slice, time::Instant};
+use std::{
+    hint::unreachable_unchecked,
+    mem::{self, MaybeUninit},
+    ptr, slice,
+    time::Instant,
+};
 
 use crate::{
     chunk::{Chunk, OpCode},
@@ -156,7 +161,7 @@ impl VM {
         }
 
         loop {
-            #[cfg(feature = "debug_prints")]
+            #[cfg(feature = "debug_trace_execution")]
             {
                 print!("          ");
                 let slice = unsafe { slice::from_ptr_range(self.stack..self.stack_top) };
@@ -544,6 +549,15 @@ impl VM {
 
         let obj = ObjPtr::new(obj);
         self.objects = obj;
+
+        if cfg!(feature = "debug_log_gc") {
+            println!(
+                "{:p} allocate {} for {:?}",
+                object,
+                mem::size_of::<T>(),
+                kind
+            )
+        }
 
         object
     }

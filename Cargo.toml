@@ -9,7 +9,10 @@ edition = "2021"
 rustyline = { version = "11.0.0", default-features = false }
 
 [features]
-debug_prints = []
+debug_print_code = []
+debug_trace_execution = []
+debug_stress_gc = []
+debug_log_gc = []
 
 [profile.dev]
 panic = "abort"

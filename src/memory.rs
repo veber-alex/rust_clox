@@ -22,6 +22,12 @@ pub fn allocate_memory<T>(size: usize) -> *mut T {
 }
 
 pub fn reallocate_memory<T>(ptr: *mut T, old_size: usize, new_size: usize) -> *mut T {
+    if new_size > old_size {
+        if cfg!(feature = "debug_stress_gc") {
+            collect_garbage();
+        }
+    }
+
     if old_size == 0 {
         if new_size == 0 {
             return NonNull::dangling().as_ptr();
@@ -81,6 +87,11 @@ pub fn free_objects(vm: &mut VM) {
 }
 
 fn free_object(obj: ObjPtr) {
+    if cfg!(feature = "debug_log_gc") {
+        // printf("%p free type %d\n", (void*)object, object->type);
+        println!("{:p} free type {:?}", obj.as_ptr(), obj.kind())
+    }
+
     match obj.kind() {
         ObjKind::OBJ_STRING => {
             // Safety: obj is a valid ObjString due to kind check
@@ -103,6 +114,16 @@ fn free_object(obj: ObjPtr) {
             free_memory(obj.as_closure())
         }
         ObjKind::OBJ_UPVALUE => free_memory(obj.as_upvalue()),
+    }
+}
+
+fn collect_garbage() {
+    if cfg!(feature = "debug_log_gc") {
+        println!("-- gc begin");
+    }
+
+    if cfg!(feature = "debug_log_gc") {
+        println!("-- gc end");
     }
 }
 

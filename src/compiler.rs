@@ -252,7 +252,7 @@ impl<'a> Parser<'a> {
         self.emit_return();
         let function = unsafe { (*self.compiler).function };
 
-        #[cfg(feature = "debug_prints")]
+        #[cfg(feature = "debug_print_code")]
         {
             if !self.had_error.get() {
                 let name = unsafe {
@@ -263,6 +263,7 @@ impl<'a> Parser<'a> {
                     }
                 };
                 self.current_chunk().disassemble_chunk(name);
+                println!("--------------")
             }
         }
 

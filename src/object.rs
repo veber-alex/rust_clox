@@ -67,7 +67,7 @@ impl ObjPtr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum ObjKind {

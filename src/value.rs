@@ -50,10 +50,11 @@ fn print_function(
     unsafe {
         let name = (*function).name;
         if name.is_null() {
-            return write!(f, "<script>");
+            write!(f, "<script>")
+        } else {
+            let name = ObjPtr::new(name.cast()).as_string_str();
+            write!(f, "<fn {}>", name)
         }
-        let name = ObjPtr::new(name.cast()).as_string_str();
-        write!(f, "<fn {}>", name)
     }
 }
 
