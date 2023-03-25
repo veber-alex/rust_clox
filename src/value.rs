@@ -3,6 +3,7 @@ use std::fmt;
 use crate::object::{ObjFunction, ObjKind, ObjPtr};
 
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub enum Value {
     Nil,
     Number(f64),
