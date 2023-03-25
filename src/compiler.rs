@@ -3,7 +3,7 @@ use std::{cell::Cell, ptr};
 use crate::{
     chunk::{Chunk, OpCode},
     object::{ObjFunction, ObjPtr},
-    scanner::{Scanner, Token, TokenKind},
+    scanner::{Scanner, Token, TokenKind, T},
     value::Value,
     vm::VM,
 };
@@ -793,7 +793,7 @@ mod jump_table {
     use crate::{
         chunk::OpCode,
         compiler::{ParseRule, Parser, Precedence},
-        scanner::TokenKind,
+        scanner::{TokenKind, T},
         value::Value,
     };
     use std::mem;

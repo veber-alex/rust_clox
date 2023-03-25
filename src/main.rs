@@ -7,13 +7,11 @@ use std::process::exit;
 
 use vm::{InterpretResult, VM};
 
-#[macro_use]
-mod scanner;
-
 mod chunk;
 mod compiler;
 mod memory;
 mod object;
+mod scanner;
 mod table;
 mod value;
 mod vm;
@@ -24,8 +22,8 @@ fn main() {
     vm.init_vm();
 
     match args.as_slice() {
-        [_] => repl(vm),
-        [_, path] => run_file(path, vm),
+        [_] => repl(&mut vm),
+        [_, path] => run_file(path, &mut vm),
         _ => {
             eprintln!("Usage: rust_clox [path]");
             exit(64)
@@ -33,7 +31,7 @@ fn main() {
     }
 }
 
-fn run_file(path: &str, mut vm: VM) {
+fn run_file(path: &str, vm: &mut VM) {
     let Ok(file) = std::fs::read_to_string(path) else {
         eprintln!("Could not open file {path}");
         exit(74)
@@ -49,7 +47,7 @@ fn run_file(path: &str, mut vm: VM) {
 }
 
 #[cfg(not(miri))]
-fn repl(mut vm: VM) {
+fn repl(vm: &mut VM) {
     use rustyline::{history::MemHistory, Config, Editor};
 
     let config = Config::builder().auto_add_history(true).build();
@@ -66,7 +64,7 @@ fn repl(mut vm: VM) {
 }
 
 #[cfg(miri)]
-fn repl(mut vm: VM) {
+fn repl(vm: &mut VM) {
     use std::io::{stdin, stdout, BufRead, Write};
 
     let mut line = String::new();

@@ -69,6 +69,8 @@ macro_rules! T {
     (ERR) => {$crate::scanner::TokenKind::Error};
 }
 
+pub(crate) use T;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {
     pub kind: TokenKind,
