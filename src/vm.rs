@@ -57,9 +57,6 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        // FIXME: This should not be here
-        unsafe { START_INSTANT = MaybeUninit::new(Instant::now()) }
-
         Self {
             frames: ptr::null_mut(),
             frame_count: 0,
@@ -70,6 +67,12 @@ impl VM {
             objects: ObjPtr::null(),
             open_upvalues: ptr::null_mut(),
         }
+    }
+
+    pub fn init_vm(&mut self) {
+        unsafe { START_INSTANT = MaybeUninit::new(Instant::now()) }
+        self.reset_stack();
+        self.define_native("clock", clock_native);
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
@@ -106,9 +109,6 @@ impl VM {
         self.frames = allocate_memory(FRAMES_MAX);
 
         self.open_upvalues = ptr::null_mut();
-
-        // FIXME: This should not be here
-        self.define_native("clock", clock_native);
     }
 
     // TODO: optimize the shit out of this loop + match
